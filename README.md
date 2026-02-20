@@ -2,13 +2,11 @@
 
 This project scans Internet Archive for NASA-related videos, classifies likely interview/Q&A content, and downloads only low-res versions for downstream transcription.
 
-It is intentionally independent from Imagery Online and does not depend on NASA ID start-time matching.
-
 ## What This Solves
 
 - Collects large amounts of interview-style astronaut footage.
 - Filters out likely non-dialogue assets (for example passive camera feeds).
-- Avoids redownloading files already present in `D:\ISSiRT_ia_videos_raw`.
+- Avoids redownloading files already present in the download location.
 - Keeps each step incremental and resumable.
 
 ## Pipeline
