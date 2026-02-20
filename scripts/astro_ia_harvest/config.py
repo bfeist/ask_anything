@@ -1,0 +1,46 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = PROJECT_ROOT / "data"
+DOCS_DIR = PROJECT_ROOT / "docs"
+DOWNLOAD_DIR = Path(r"D:\ask_anything_ia_videos_raw")
+
+IA_METADATA_JSONL = DATA_DIR / "ia_video_metadata.jsonl"
+IA_PROGRESS_FILE = DATA_DIR / "ia_identifiers_seen.txt"
+CLASSIFIED_JSONL = DATA_DIR / "classified_candidates.jsonl"
+DOWNLOAD_LOG_CSV = DATA_DIR / "download_log.csv"
+DOWNLOAD_FAILURES_JSONL = DATA_DIR / "download_failures.jsonl"
+
+# Existing cache from the other project. Files found here will be treated as already downloaded.
+EXISTING_DOWNLOAD_DIR = Path(r"D:\ISSiRT_ia_videos_raw")
+
+IA_ROWS_PER_REQUEST = 100
+IA_UPLOADERS = [
+    "john.l.stoll@nasa.gov",  # Primary NASA TV uploader (John Stoll, JSC PAO)
+    "elizabeth.k.weissinger@nasa.gov",  # JSC PAO uploader (Beth Weissinger)
+    "dexter.herbert-1@nasa.gov",  # JSC PAO uploader (Dexter Herbert)
+    "edmond.a.toma@nasa.gov",  # JSC PAO uploader (Edmond Toma)
+    "e.toma@nasa.gov",  # JSC PAO uploader (older account)
+]
+
+# Extensions that can map to playable video assets.
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mxf", ".m4v", ".avi", ".mpg", ".mpeg", ".webm"}
+
+DEFAULT_OLLAMA_URL = "http://localhost:11434/api/generate"
+DEFAULT_OLLAMA_MODEL = "gemma3:12b"
+
+
+def ensure_directories() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def env_or_default(name: str, default: str) -> str:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    return value.strip()
