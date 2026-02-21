@@ -5,3 +5,9 @@ __pycache__/
 uv.lock
 
 data/
+
+# Node / Vite
+node_modules/
+dist/
+coverage/
+*.local
