@@ -72,18 +72,26 @@ def append_csv_row(filename: str, identifier: str, status: str, detail: str) -> 
 
 
 def try_download(url: str, out_path: Path) -> tuple[bool, str]:
+    """Download url to out_path, writing via a .tmp file to avoid leaving
+    partial files behind if the download is interrupted or fails."""
+    tmp_path = Path(str(out_path) + ".tmp")
     try:
         with requests.get(url, stream=True, timeout=90) as resp:
             if resp.status_code != 200:
                 return False, f"http_{resp.status_code}"
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(out_path, "wb") as f:
+            with open(tmp_path, "wb") as f:
                 for chunk in resp.iter_content(chunk_size=1024 * 256):
                     if chunk:
                         f.write(chunk)
+        tmp_path.rename(out_path)
         return True, "ok"
     except requests.RequestException as exc:
+        tmp_path.unlink(missing_ok=True)
         return False, f"network_error:{exc}"
+    except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise exc
 
 
 def main() -> None:
@@ -156,8 +164,8 @@ def main() -> None:
             failed += 1
             append_csv_row(output_name, ident, "failure", last_detail)
             append_failure(rec, last_detail)
-            if output_path.exists():
-                output_path.unlink(missing_ok=True)
+            # .tmp is cleaned up inside try_download; belt-and-suspenders cleanup here
+            Path(str(output_path) + ".tmp").unlink(missing_ok=True)
 
         if idx == 1 or idx % 25 == 0:
             print(

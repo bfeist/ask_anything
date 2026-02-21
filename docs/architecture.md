@@ -17,29 +17,43 @@ scripts/                       # All Python code lives here (src/ reserved for f
   1_scan_ia_metadata.py        # Step 1 entry point
   2_classify_candidates.py     # Step 2 entry point
   3_download_lowres.py         # Step 3 entry point
+  4_transcribe_videos.py       # Step 4 entry point
   run_pipeline.py              # Orchestrator
 data/                          # Runtime data (gitignored)
+  transcripts/                 # WhisperX JSON output per video
 docs/                          # Architecture and operations docs
 ```
 
 ## Pipeline Steps
 
 1. `scripts/1_scan_ia_metadata.py`
+
 - Queries IA by uploader only (the five known NASA JSC PAO accounts in `config.py`).
 - Fetches item metadata and writes one JSONL record per candidate video file.
 - Stores identifier progress in `data/ia_identifiers_seen.txt` for incremental reruns.
 
 2. `scripts/2_classify_candidates.py`
+
 - Sends each filename/title/description/subject to Ollama for keep/reject classification.
 - Writes a persistent classification JSONL with decision traces and model used.
 - If Ollama is unreachable, records default to reject and can be re-classified later.
 
 3. `scripts/3_download_lowres.py`
+
 - Downloads only records marked `likely_relevant=true`.
 - Tries low-res IA variant first (`.ia.mp4`), then fallback variants.
 - Skips if the source video key already exists in local project downloads or the legacy directory.
 
-4. `scripts/run_pipeline.py`
+4. `scripts/4_transcribe_videos.py`
+
+- Transcribes downloaded videos using WhisperX (large-v3) with CUDA GPU acceleration.
+- Performs forced alignment for accurate per-word English timestamps.
+- Optionally runs pyannote speaker diarization when `HF_TOKEN` is set.
+- Outputs one JSON per video in `data/transcripts/` with segments, word timestamps, and speaker labels.
+- Skips videos that already have a transcript JSON (use `--force` to re-transcribe).
+
+5. `scripts/run_pipeline.py`
+
 - Orchestrates step execution and passes classifier runtime options.
 
 ## Data Flow
@@ -50,6 +64,9 @@ docs/                          # Architecture and operations docs
   - video files under `D:\ask_anything_ia_videos_raw`
   - `data/download_log.csv`
   - `data/download_failures.jsonl`
+- Step 4 outputs:
+  - `data/transcripts/<video_stem>.json` — one per transcribed video
+  - `data/transcript_log.jsonl` — success/failure log
 
 ## Why This Design
 

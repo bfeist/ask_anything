@@ -3,7 +3,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# Load .env from project root (silently ignored if it doesn't exist)
+load_dotenv(PROJECT_ROOT / ".env")
 DATA_DIR = PROJECT_ROOT / "data"
 DOCS_DIR = PROJECT_ROOT / "docs"
 DOWNLOAD_DIR = Path(r"D:\ask_anything_ia_videos_raw")
@@ -13,6 +18,10 @@ IA_PROGRESS_FILE = DATA_DIR / "ia_identifiers_seen.txt"
 CLASSIFIED_JSONL = DATA_DIR / "classified_candidates.jsonl"
 DOWNLOAD_LOG_CSV = DATA_DIR / "download_log.csv"
 DOWNLOAD_FAILURES_JSONL = DATA_DIR / "download_failures.jsonl"
+
+# Transcription outputs
+TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
+TRANSCRIPT_LOG_JSONL = DATA_DIR / "transcript_log.jsonl"
 
 # Existing cache from the other project. Files found here will be treated as already downloaded.
 EXISTING_DOWNLOAD_DIR = Path(r"D:\ISSiRT_ia_videos_raw")
@@ -37,6 +46,7 @@ def ensure_directories() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def env_or_default(name: str, default: str) -> str:

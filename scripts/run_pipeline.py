@@ -15,12 +15,13 @@ STEPS = {
     1: ROOT / "scripts" / "1_scan_ia_metadata.py",
     2: ROOT / "scripts" / "2_classify_candidates.py",
     3: ROOT / "scripts" / "3_download_lowres.py",
+    4: ROOT / "scripts" / "4_transcribe_videos.py",
 }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run IA astronaut interview harvest pipeline")
-    parser.add_argument("--steps", nargs="+", type=int, choices=[1, 2, 3], default=[1, 2, 3])
+    parser.add_argument("--steps", nargs="+", type=int, choices=[1, 2, 3, 4], default=[1, 2, 3, 4])
     parser.add_argument("--model", default="gemma3:12b")
     parser.add_argument("--ollama-url", default="http://localhost:11434/api/generate")
     parser.add_argument("--step1-max-pages", type=int, default=0)
@@ -29,6 +30,9 @@ def main() -> None:
     parser.add_argument("--step2-limit", type=int, default=0)
     parser.add_argument("--step3-limit", type=int, default=0)
     parser.add_argument("--step3-dry-run", action="store_true")
+    parser.add_argument("--step4-limit", type=int, default=0)
+    parser.add_argument("--step4-model", default="large-v3")
+    parser.add_argument("--step4-no-diarize", action="store_true")
     args = parser.parse_args()
 
     total_start = time.time()
@@ -56,6 +60,12 @@ def main() -> None:
                 cmd.extend(["--limit", str(args.step3_limit)])
             if args.step3_dry_run:
                 cmd.append("--dry-run")
+        if step == 4:
+            cmd.extend(["--model", args.step4_model])
+            if args.step4_limit > 0:
+                cmd.extend(["--limit", str(args.step4_limit)])
+            if args.step4_no_diarize:
+                cmd.append("--no-diarize")
 
         print(f"\n{'=' * 70}")
         print(f"Step {step}: {path.name}")
