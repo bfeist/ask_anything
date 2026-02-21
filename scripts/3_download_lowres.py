@@ -48,6 +48,19 @@ from astro_ia_harvest.download_utils import (  # noqa: E402
 from astro_ia_harvest.jsonl_utils import load_jsonl  # noqa: E402
 
 MAX_CONCURRENT_DOWNLOADS = 5
+MAX_RETRIES = 3
+RETRY_BACKOFF = [15, 45, 120]  # seconds to wait before retry 1, 2, 3
+SOCK_READ_TIMEOUT = 120       # abort if no data received for 120 s
+PER_RECORD_TIMEOUT = 45 * 60  # 45-minute safety-net per record
+THROTTLE_WINDOW = 60          # seconds — if all recent failures fall in this window…
+THROTTLE_THRESHOLD = 5        # …and there are this many, trigger a cooldown
+THROTTLE_COOLDOWN = 120       # seconds to pause all downloads when throttled
+RETRYABLE_HTTP = {429, 503, 502, 504}  # server-side retryable status codes
+
+# Shared mutable state for throttle detection across workers
+_recent_failures: list[float] = []   # timestamps of recent timeout/network failures
+_throttle_lock = None  # initialised to asyncio.Lock() inside async_main
+
 
 console = Console(
     theme=Theme(
@@ -129,6 +142,33 @@ def _record_key(rec: dict) -> str:
 # ------------------------------------------------------------------
 
 
+async def _check_throttle(tag: str) -> None:
+    """If recent failures suggest server-side throttling, pause with a cooldown."""
+    global _recent_failures
+    should_cool = False
+    async with _throttle_lock:
+        now = time.time()
+        # Prune old entries
+        _recent_failures = [t for t in _recent_failures if now - t < THROTTLE_WINDOW]
+        if len(_recent_failures) >= THROTTLE_THRESHOLD:
+            console.print(
+                f"[warning]{tag} Throttle detected "
+                f"({len(_recent_failures)} failures in {THROTTLE_WINDOW}s) — "
+                f"cooling down {THROTTLE_COOLDOWN}s…[/warning]"
+            )
+            _recent_failures.clear()  # reset so only one cooldown fires
+            should_cool = True
+    # Sleep outside the lock so other coroutines can proceed
+    if should_cool:
+        await asyncio.sleep(THROTTLE_COOLDOWN)
+        console.print(f"[info]{tag} Resuming after cooldown[/info]")
+
+
+async def _record_failure_ts() -> None:
+    async with _throttle_lock:
+        _recent_failures.append(time.time())
+
+
 async def download_file(
     session: aiohttp.ClientSession,
     url: str,
@@ -146,20 +186,37 @@ async def download_file(
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
 
-        # HEAD to check availability and get content-length
-        head_timeout = aiohttp.ClientTimeout(total=30, connect=10)
-        async with session.head(url, timeout=head_timeout, headers=headers, allow_redirects=True) as hr:
-            if hr.status == 404:
-                return False, f"{label}:http_404"
-            if hr.status not in (200, 302):
-                return False, f"{label}:http_{hr.status}"
-            file_size = int(hr.headers.get("content-length", 0))
+        # HEAD to check availability and get content-length (non-fatal on timeout)
+        file_size = 0
+        try:
+            head_timeout = aiohttp.ClientTimeout(total=60, connect=30)
+            async with session.head(url, timeout=head_timeout, headers=headers, allow_redirects=True) as hr:
+                if hr.status == 404:
+                    return False, f"{label}:http_404"
+                if hr.status in RETRYABLE_HTTP:
+                    await _record_failure_ts()
+                    return False, f"{label}:http_{hr.status}"
+                if hr.status not in (200, 302):
+                    return False, f"{label}:http_{hr.status}"
+                file_size = int(hr.headers.get("content-length", 0))
+        except (asyncio.TimeoutError, aiohttp.ClientError):
+            # HEAD timed out — not fatal, proceed to GET without known size
+            pass
 
         # GET and stream to file
-        dl_timeout = aiohttp.ClientTimeout(connect=30, total=0)
+        dl_timeout = aiohttp.ClientTimeout(
+            connect=30, total=0, sock_read=SOCK_READ_TIMEOUT
+        )
         async with session.get(url, timeout=dl_timeout, headers=headers, allow_redirects=True) as resp:
+            if resp.status in RETRYABLE_HTTP:
+                await _record_failure_ts()
+                return False, f"{label}:http_{resp.status}"
             if resp.status != 200:
                 return False, f"{label}:http_{resp.status}"
+
+            # If HEAD didn't give us a size, try from GET response
+            if not file_size:
+                file_size = int(resp.headers.get("content-length", 0))
 
             out_path.parent.mkdir(parents=True, exist_ok=True)
             downloaded = 0
@@ -198,12 +255,20 @@ async def download_file(
             )
             return True, "ok"
 
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, asyncio.CancelledError):
         try:
             tmp_path.unlink(missing_ok=True)
         except OSError:
             pass
+        await _record_failure_ts()
         return False, f"{label}:timeout"
+    except aiohttp.ClientError as exc:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        await _record_failure_ts()
+        return False, f"{label}:network_error:{exc}"
     except Exception as exc:
         try:
             tmp_path.unlink(missing_ok=True)
@@ -252,14 +317,31 @@ async def process_record(
 
         last_detail = "no_candidate_url"
         for url, label in urls:
-            ok, detail = await download_file(
-                session, url, output_path, tag, label, progress, active_downloads
-            )
-            if ok:
-                existing_keys.add(source_key)
-                append_csv_row(output_name, ident, "success", label)
-                return "downloaded"
-            last_detail = detail
+            for attempt in range(1, MAX_RETRIES + 2):  # 1 try + MAX_RETRIES retries
+                # Before each attempt, check if we should back off globally
+                await _check_throttle(tag)
+
+                ok, detail = await download_file(
+                    session, url, output_path, tag, label, progress, active_downloads
+                )
+                if ok:
+                    existing_keys.add(source_key)
+                    append_csv_row(output_name, ident, "success", label)
+                    return "downloaded"
+                last_detail = detail
+                is_retryable = any(tok in detail for tok in (
+                    "timeout", "network_error",
+                    "http_429", "http_503", "http_502", "http_504",
+                ))
+                if is_retryable and attempt <= MAX_RETRIES:
+                    wait = RETRY_BACKOFF[attempt - 1]
+                    console.print(
+                        f"{tag} [warning]Retry {attempt}/{MAX_RETRIES} "
+                        f"in {wait}s ({detail})[/warning]"
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    break  # non-retryable or retries exhausted
 
         # All attempts failed
         append_csv_row(output_name, ident, "failure", last_detail)
@@ -287,6 +369,9 @@ async def async_main(dry_run: bool, limit: int) -> None:
     console.print(f"Parallel downloads: {MAX_CONCURRENT_DOWNLOADS}")
     console.print(f"Existing normalized video keys: {len(existing_keys)}")
     console.print()
+
+    global _throttle_lock
+    _throttle_lock = asyncio.Lock()
 
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
     connector = aiohttp.TCPConnector(limit=10, limit_per_host=5)
@@ -356,9 +441,12 @@ async def async_main(dry_run: bool, limit: int) -> None:
                 # Launch downloads for this batch — semaphore limits concurrency
                 tasks = [
                     asyncio.create_task(
-                        process_record(
-                            session, semaphore, rec, existing_keys,
-                            progress, active_downloads, dry_run,
+                        asyncio.wait_for(
+                            process_record(
+                                session, semaphore, rec, existing_keys,
+                                progress, active_downloads, dry_run,
+                            ),
+                            timeout=PER_RECORD_TIMEOUT,
                         )
                     )
                     for rec in new_targets
@@ -371,7 +459,19 @@ async def async_main(dry_run: bool, limit: int) -> None:
                         pending, return_when=asyncio.FIRST_COMPLETED
                     )
                     for t in done:
-                        result = t.result()
+                        try:
+                            result = t.result()
+                        except (asyncio.TimeoutError, asyncio.CancelledError):
+                            result = "failed"
+                            console.print(
+                                "[error]Record exceeded per-record "
+                                f"timeout ({PER_RECORD_TIMEOUT}s), aborted[/error]"
+                            )
+                        except Exception as exc:
+                            result = "failed"
+                            console.print(
+                                f"[error]Unexpected error: {exc}[/error]"
+                            )
                         total_processed += 1
                         if result == "downloaded":
                             downloaded += 1
@@ -403,9 +503,12 @@ async def async_main(dry_run: bool, limit: int) -> None:
                         )
                         for rec in new_batch:
                             task = asyncio.create_task(
-                                process_record(
-                                    session, semaphore, rec, existing_keys,
-                                    progress, active_downloads, dry_run,
+                                asyncio.wait_for(
+                                    process_record(
+                                        session, semaphore, rec, existing_keys,
+                                        progress, active_downloads, dry_run,
+                                    ),
+                                    timeout=PER_RECORD_TIMEOUT,
                                 )
                             )
                             pending.add(task)

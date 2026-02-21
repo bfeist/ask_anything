@@ -37,9 +37,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from astro_ia_harvest.config import (  # noqa: E402
+    CLASSIFY_DIR,
     DEFAULT_OLLAMA_MODEL,
     DEFAULT_OLLAMA_URL,
     TRANSCRIPTS_DIR,
+    ensure_directories,
     env_or_default,
 )
 from astro_ia_harvest.ollama_client import call_ollama, extract_json  # noqa: E402
@@ -54,26 +56,73 @@ from astro_ia_harvest.transcript_utils import (  # noqa: E402
 # Constants
 # ---------------------------------------------------------------------------
 
-EVENT_TYPES = ("student_qa", "press_conference", "panel", "other")
+EVENT_TYPES = (
+    "student_qa",
+    "press_conference",
+    "media_interview",
+    "panel",
+    "produced_content",
+    "other",
+)
 
 CLASSIFY_SYSTEM_PROMPT = """\
-You are a NASA video transcript classifier. Given speaker statistics and the \
-opening portion of a transcript, determine the event type.
+You are a NASA video transcript classifier. Given a video filename, speaker \
+statistics, and the opening portion of a transcript, determine the event type.
+
+IMPORTANT: The VIDEO FILENAME is your strongest signal. Keywords in the filename \
+should be treated as near-definitive evidence of the event type:
+- "News_Conference", "News Conference", "Press_Conference", "Postflight", \
+"Post-Flight", "Post_Flight", "Mission_Overview_Briefing", \
+"Flight_Readiness" → press_conference
+- "Education", "Inflight_with", "EDU", "ARISS", "School", "Student", \
+"Answers_Questions_From_Students" → student_qa
+- "Inflight_KTTV", "Inflight_KDVR", "Inflight_[TV station]", \
+"Discusses_Life_In_Space_With", "Talks_with", "Answers_Media_Questions", \
+"Interviews_with" → media_interview
+- "Explainer", "What_Human_Health", "Connecting_Classrooms_to_Space" (without \
+live Q&A), montage, overview with no Q&A portion → produced_content
 
 Classify as exactly ONE of:
 - "student_qa": A school downlink / ARISS contact where students ask an astronaut \
 questions from Earth. Characterized by: one dominant speaker (astronaut) with many \
-brief speakers (students), satellite delay gaps, students saying "Hi my name is...".
+brief speakers (students), satellite delay gaps, students saying "Hi my name is...". \
+Note: some student Q&A events are between an astronaut and a museum or educational \
+organization — still classify as student_qa.
 - "press_conference": A news conference where journalists/reporters ask questions to \
 astronauts, officials, or a panel. Characterized by: a moderator introducing \
 reporters by name/outlet, multiple crew members giving opening statements, formal \
-Q&A with named reporters.
+Q&A with named reporters. Also includes post-flight news conferences, mission \
+overview briefings with Q&A, and pre-launch press events.
+- "media_interview": A TV station, radio, or newspaper interview with an astronaut. \
+Typically 1-2 interviewers from a single media outlet talking with 1-2 astronauts. \
+Characterized by: informal conversational tone, TV anchor/host asking questions, \
+astronaut answering. Often called "inflight" events (e.g. "Inflight KTTV-TV" or \
+"Discusses Life in Space with [outlet]"). Usually 2-4 speakers total.
 - "panel": A panel discussion or roundtable with roughly equal speaking time among \
-participants. Less structured Q&A.
-- "other": Anything that doesn't fit the above (ceremony, lecture, documentary, etc).
+participants. Less structured Q&A with multiple expert speakers.
+- "produced_content": A pre-recorded, edited, or narrated video with NO live Q&A. \
+Examples: mission overview montages, explainer videos, educational segments, \
+narrated documentaries. Characterized by: 1-2 speakers total, scripted/rehearsed \
+tone, no back-and-forth question-answer pattern, very short segments that sound \
+like sound bites rather than conversation. If only 1 speaker talks for nearly the \
+entire video, it is likely produced content.
+- "other": Anything that doesn't fit the above (ceremony, lecture, etc).
+
+IMPORTANT RULES:
+1. If a video has ONLY 1-2 speakers and one speaker dominates >90% of talk time \
+with no clear questions being asked by others, classify as "produced_content".
+2. If the transcript shows a conversational back-and-forth between a TV host and \
+an astronaut, classify as "media_interview" even if speaker count is >=3 (audio \
+bleed from broadcast can create extra speaker labels).
+3. A video named "News Conference" or "Post-flight" is very likely "press_conference".
+4. When uncertain between "other" and a more specific type, prefer the specific type \
+if there is any Q&A pattern visible.
+5. Very short videos (under 3 minutes) with only sound bites and no Q&A exchange \
+pattern are almost always "produced_content" — they are promotional montages or \
+highlight reels.
 
 Respond with a JSON object containing exactly two keys:
-  {"event_type": "<one of the four types>", "confidence": "<high/medium/low>"}
+  {"event_type": "<one of the six types>", "confidence": "<high/medium/low>"}
 
 No markdown fencing, no commentary — just the JSON object.\
 """
@@ -88,6 +137,7 @@ def classify_event(
     ollama_url: str,
     model: str,
     temperature: float,
+    transcript_filename: str = "",
 ) -> tuple[str, str]:
     """Classify the event type. Returns (event_type, confidence)."""
     stats = speaker_stats(segments)
@@ -102,10 +152,17 @@ def classify_event(
     else:
         opening_text = format_plain_transcript(early_segs)
 
-    user_prompt = (
-        f"SPEAKER STATISTICS:\n{stats}\n\n"
-        f"OPENING TRANSCRIPT (first {cutoff:.0f}s):\n\n{opening_text}"
-    )
+    # Build prompt with filename hint and duration info when available
+    total_duration = segments[-1]["end"] if segments else 0
+    parts = []
+    if transcript_filename:
+        # Clean up the filename for display — remove extensions, underscores, etc.
+        clean_name = transcript_filename.replace("_lowres.json", "").replace("_", " ")
+        parts.append(f"VIDEO FILENAME: {clean_name}")
+    parts.append(f"VIDEO DURATION: {total_duration:.0f} seconds ({total_duration/60:.1f} minutes)")
+    parts.append(f"SPEAKER STATISTICS:\n{stats}")
+    parts.append(f"OPENING TRANSCRIPT (first {cutoff:.0f}s):\n\n{opening_text}")
+    user_prompt = "\n\n".join(parts)
 
     print(f"  Classifying event type ({len(user_prompt)} chars)...")
     t0 = time.time()
@@ -149,6 +206,8 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=0, help="Max transcripts to classify (0 = all)")
     args = parser.parse_args()
 
+    ensure_directories()
+
     print("=" * 70)
     print("Stage 5a: Classify Event Type")
     print("=" * 70)
@@ -167,7 +226,7 @@ def main() -> None:
 
     # Filter already-classified unless --force
     if not args.force:
-        candidates = [p for p in candidates if not p.with_suffix(".classify.json").exists()]
+        candidates = [p for p in candidates if not (CLASSIFY_DIR / (p.stem + ".classify.json")).exists()]
 
     if args.limit > 0:
         candidates = candidates[: args.limit]
@@ -184,6 +243,7 @@ def main() -> None:
 
             event_type, confidence = classify_event(
                 segments, args.ollama_url, args.model, args.temperature,
+                transcript_filename=transcript_path.name,
             )
             print(f"  Event type: {event_type} (confidence: {confidence})")
 
@@ -194,7 +254,7 @@ def main() -> None:
                 "confidence": confidence,
                 "classified_at": datetime.now(timezone.utc).isoformat(),
             }
-            out_path = transcript_path.with_suffix(".classify.json")
+            out_path = CLASSIFY_DIR / (transcript_path.stem + ".classify.json")
             out_path.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
             print(f"  Saved to: {out_path}")
             successes += 1

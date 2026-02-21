@@ -5,6 +5,15 @@ Scans both the primary download directory (D:\\ask_anything_ia_videos_raw) and t
 legacy directory (D:\\ISSiRT_ia_videos_raw) for .mp4 files.  Files that already
 have a matching transcript JSON in data/transcripts/ are skipped.
 
+Before transcription, a multi-segment language detection pass samples audio
+from several points throughout the file (not just the first 30 seconds) to
+reliably determine whether the content is English.  Non-English videos are
+logged to data/non_english_videos.jsonl and skipped.  Subsequent runs
+automatically skip videos already in that file.
+
+English audio is transcribed normally; alignment uses the English wav2vec2
+model so phonemes match correctly.
+
 Output per video:  data/transcripts/<video_stem>.json
 Each JSON contains full WhisperX segment data with aligned timestamps and,
 when a HuggingFace token is available, speaker diarization labels.
@@ -23,9 +32,11 @@ import json
 import os
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import torch
 
 # Monkey-patch: lightning_fabric passes weights_only=None to torch.load, which
@@ -53,11 +64,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from astro_ia_harvest.config import (  # noqa: E402
     DOWNLOAD_DIR,
     EXISTING_DOWNLOAD_DIR,
+    NON_ENGLISH_JSONL,
     TRANSCRIPTS_DIR,
     TRANSCRIPT_LOG_JSONL,
     ensure_directories,
 )
-from astro_ia_harvest.jsonl_utils import append_jsonl  # noqa: E402
+from astro_ia_harvest.jsonl_utils import append_jsonl, load_jsonl  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -66,7 +78,27 @@ DEFAULT_WHISPER_MODEL = "large-v3"
 DEFAULT_BATCH_SIZE = 16  # reduce if VRAM is tight
 DEFAULT_COMPUTE_TYPE = "float16"
 DEFAULT_DIARIZE_MODEL = "pyannote/speaker-diarization-3.1"
-DEFAULT_LANGUAGE = "auto"  # "auto" = detect from audio; or force e.g. "en", "ru"
+LANG_DETECT_SAMPLE_SECONDS = 30  # duration of each sample window
+LANG_DETECT_NUM_SAMPLES = 5     # number of windows to sample
+LANG_DETECT_ENGLISH_THRESHOLD = 0.5  # fraction of samples that must be English
+
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+class NonEnglishError(Exception):
+    """Raised when language detection determines a video is not English."""
+
+    def __init__(self, video_path: Path, detected_lang: str, details: dict, elapsed: float):
+        self.video_path = video_path
+        self.detected_lang = detected_lang
+        self.details = details
+        self.elapsed = elapsed
+        super().__init__(
+            f"Non-English audio detected: {detected_lang} "
+            f"(English in {details['english_fraction']:.0%} of samples)"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +132,89 @@ def load_transcribed_set() -> set[str]:
     return {p.stem for p in TRANSCRIPTS_DIR.glob("*.json")}
 
 
+def load_non_english_set() -> set[str]:
+    """Return set of video stems previously flagged as non-English."""
+    records = load_jsonl(NON_ENGLISH_JSONL)
+    return {r["video_stem"] for r in records if "video_stem" in r}
+
+
+def detect_language_multi_sample(
+    audio: np.ndarray,
+    model,
+    *,
+    sample_rate: int = 16_000,
+    num_samples: int = LANG_DETECT_NUM_SAMPLES,
+    sample_seconds: int = LANG_DETECT_SAMPLE_SECONDS,
+) -> tuple[str, dict]:
+    """Detect language by sampling multiple windows from the middle third.
+
+    NASA videos typically have an English intro (slate, host remarks) and
+    sometimes an English outro.  The actual interview content lives in the
+    middle.  To avoid being fooled by English bookends, we sample *only*
+    from the middle third of the audio.
+
+    Returns (language_code, details_dict) where *details_dict* contains
+    per-sample results and the vote tally for logging.
+    """
+    total_samples = len(audio)
+    window_len = sample_seconds * sample_rate
+
+    # Use only the middle third of the audio to avoid English intros/outros
+    third = total_samples // 3
+    usable_start = third
+    usable_end = 2 * third
+    duration_sec = round(total_samples / sample_rate, 1)
+    print(f"    Audio duration: {duration_sec}s — sampling middle third "
+          f"({round(usable_start / sample_rate, 1)}s – "
+          f"{round(usable_end / sample_rate, 1)}s)")
+
+    if usable_end - usable_start < window_len:
+        # Very short audio — just use the whole thing as one sample
+        offsets = [max(0, (total_samples - window_len) // 2)]
+    else:
+        usable_range = usable_end - usable_start - window_len
+        step = usable_range // max(num_samples - 1, 1)
+        offsets = [usable_start + step * i for i in range(num_samples)]
+
+    sample_results = []
+    for idx, offset in enumerate(offsets):
+        chunk = audio[offset : offset + window_len]
+        # Use faster-whisper's language detection via the model
+        try:
+            segments, info = model.model.transcribe(
+                chunk, task="transcribe", without_timestamps=True,
+                # Only detect language, don't actually decode much
+            )
+            # Consume the generator to get info populated
+            _ = next(segments, None)
+            lang = info.language
+            prob = info.language_probability
+        except Exception:
+            lang = "unknown"
+            prob = 0.0
+        offset_sec = round(offset / sample_rate, 1)
+        sample_results.append({
+            "offset_s": offset_sec,
+            "language": lang,
+            "probability": round(prob, 3),
+        })
+        print(f"    Sample {idx + 1}/{len(offsets)} @ {offset_sec}s → {lang} ({prob:.1%})")
+
+    # Majority vote
+    lang_counts = Counter(s["language"] for s in sample_results)
+    majority_lang, majority_count = lang_counts.most_common(1)[0]
+    en_count = lang_counts.get("en", 0)
+    en_fraction = en_count / len(sample_results)
+
+    details = {
+        "samples": sample_results,
+        "vote_counts": dict(lang_counts),
+        "majority_language": majority_lang,
+        "english_fraction": round(en_fraction, 3),
+    }
+    return majority_lang, details
+
+
 def save_transcript(video_path: Path, result: dict, meta: dict) -> Path:
     """Write the WhisperX result to a JSON file and return the path."""
     out_path = TRANSCRIPTS_DIR / f"{transcript_stem(video_path)}.json"
@@ -112,10 +227,6 @@ def save_transcript(video_path: Path, result: dict, meta: dict) -> Path:
             "end": round(seg["end"], 3),
             "text": seg.get("text", "").strip(),
         }
-        if seg.get("text_en"):
-            clean_seg["text_en"] = seg["text_en"].strip()
-        if "language" in seg:
-            clean_seg["language"] = seg["language"]
         if "speaker" in seg:
             clean_seg["speaker"] = seg["speaker"]
         # Keep word-level timestamps if present (useful for precise seeking)
@@ -136,8 +247,7 @@ def save_transcript(video_path: Path, result: dict, meta: dict) -> Path:
         "video_file": video_path.name,
         "video_path": str(video_path),
         "model": meta["model"],
-        "language": meta.get("detected_language", "en"),
-        "translated": meta.get("translated", False),
+        "language": "en",
         "diarization": meta["diarization"],
         "compute_type": meta["compute_type"],
         "transcribed_at": datetime.now(timezone.utc).isoformat(),
@@ -156,43 +266,23 @@ def save_transcript(video_path: Path, result: dict, meta: dict) -> Path:
 # Core transcription
 # ---------------------------------------------------------------------------
 
-def _merge_translations(
-    original_segments: list[dict],
-    translated_segments: list[dict],
-    detected_lang: str,
-) -> None:
-    """Add ``text_en`` and ``language`` to original segments by timestamp overlap."""
-    for orig in original_segments:
-        orig["language"] = detected_lang
-        # Find translated segments that overlap with this original segment
-        overlapping = [
-            t for t in translated_segments
-            if t["end"] > orig["start"] and t["start"] < orig["end"]
-        ]
-        if overlapping:
-            eng_text = " ".join(t.get("text", "").strip() for t in overlapping)
-            if eng_text:
-                orig["text_en"] = eng_text
-
-
 def transcribe_video(
     video_path: Path,
     *,
     model_name: str = DEFAULT_WHISPER_MODEL,
     batch_size: int = DEFAULT_BATCH_SIZE,
     compute_type: str = DEFAULT_COMPUTE_TYPE,
-    language: str = DEFAULT_LANGUAGE,
     hf_token: str | None = None,
     diarize_model_name: str = DEFAULT_DIARIZE_MODEL,
     device: str = "cuda",
     min_speakers: int | None = None,
     max_speakers: int | None = None,
 ) -> Path:
-    """Run WhisperX transcription + alignment + optional diarization on a video.
+    """Run language detection + WhisperX transcription + alignment + diarization.
 
-    When *language* is ``"auto"`` the language is detected from the audio.
-    If the detected language is not English a second translation pass is run
-    to produce ``text_en`` fields for each segment.
+    First runs multi-segment language detection.  If the audio is determined
+    to be non-English, raises ``NonEnglishError`` so the caller can log it
+    and skip transcription.
 
     Returns the path to the saved transcript JSON.
     """
@@ -201,50 +291,54 @@ def transcribe_video(
     print(f"Transcribing: {video_path.name}")
     print(f"  Path:      {video_path}")
     print(f"  Model:     {model_name}  Compute: {compute_type}  Device: {device}")
-    print(f"  Language:  {language}")
-
-    auto_detect = language == "auto"
 
     # 1. Load audio
     print("  Loading audio …")
     audio = whisperx.load_audio(str(video_path))
 
-    # 2. Transcribe (original language)
-    print("  Running whisper transcription …")
+    # 2. Multi-segment language detection
+    print("  Running multi-segment language detection …")
     model = whisperx.load_model(
         model_name,
         device,
         compute_type=compute_type,
-        **({}  if auto_detect else {"language": language}),
     )
-    transcribe_kwargs: dict = {"batch_size": batch_size}
-    if not auto_detect:
-        transcribe_kwargs["language"] = language
-    result = model.transcribe(audio, **transcribe_kwargs)
-    detected_lang = result.get("language", language if not auto_detect else "en")
-    num_raw = len(result.get("segments", []))
-    print(f"  Detected language: {detected_lang}")
-    print(f"  Raw segments: {num_raw}")
+    detected_lang, lang_details = detect_language_multi_sample(audio, model)
+    en_fraction = lang_details["english_fraction"]
+    print(f"  Language detection result: {detected_lang} "
+          f"(English in {en_fraction:.0%} of samples)")
 
-    # 3. Translation pass (if non-English and we want English translations)
-    translated_result = None
-    if detected_lang != "en":
-        print(f"  Running English translation pass (detected {detected_lang})…")
-        translated_result = model.transcribe(
-            audio, batch_size=batch_size, task="translate",
+    if en_fraction < LANG_DETECT_ENGLISH_THRESHOLD:
+        # Non-English — free resources and signal to caller
+        del model
+        torch.cuda.empty_cache()
+        elapsed = time.time() - t0
+        raise NonEnglishError(
+            video_path=video_path,
+            detected_lang=detected_lang,
+            details=lang_details,
+            elapsed=elapsed,
         )
-        print(f"  Translation segments: {len(translated_result.get('segments', []))}")
+
+    # 3. Transcribe (English)
+    # Explicitly pass language="en" to suppress WhisperX's internal first-30s
+    # language detection, which is unreliable (e.g. it can misdetect English
+    # intros as Norwegian nn, Latin, etc.).  We've already confirmed English
+    # via multi-segment detection above.
+    print("  Running whisper transcribe (language=en forced) …")
+    result = model.transcribe(audio, batch_size=batch_size, language="en")
+    num_raw = len(result.get("segments", []))
+    print(f"  Raw segments: {num_raw}")
 
     # Free model VRAM before alignment
     del model
     torch.cuda.empty_cache()
 
-    # 4. Align original text
-    lang_for_align = detected_lang if auto_detect else language
-    print(f"  Aligning timestamps ({lang_for_align})…")
+    # 4. Align timestamps (English audio → English text, phonemes match)
+    print("  Aligning timestamps (en)…")
     try:
         align_model, align_meta = whisperx.load_align_model(
-            language_code=lang_for_align, device=device
+            language_code="en", device=device
         )
         result = whisperx.align(
             result["segments"],
@@ -257,31 +351,10 @@ def transcribe_video(
         del align_model
         torch.cuda.empty_cache()
     except Exception as exc:
-        print(f"  ⚠ Alignment model not available for '{lang_for_align}': {exc}")
+        print(f"  ⚠ English alignment failed: {exc}")
         print("  Continuing with unaligned timestamps.")
 
-    # 5. Align translated text (if we have a translation pass)
-    if translated_result is not None:
-        print("  Aligning English translation…")
-        try:
-            align_model_en, align_meta_en = whisperx.load_align_model(
-                language_code="en", device=device
-            )
-            translated_result = whisperx.align(
-                translated_result["segments"],
-                align_model_en,
-                align_meta_en,
-                audio,
-                device,
-                return_char_alignments=False,
-            )
-            del align_model_en
-            torch.cuda.empty_cache()
-        except Exception as exc:
-            print(f"  ⚠ English alignment failed: {exc}")
-            print("  Translations will use unaligned timestamps.")
-
-    # 6. Diarization (optional)
+    # 5. Diarization (optional)
     diarized = False
     if hf_token:
         print("  Running speaker diarization …")
@@ -308,28 +381,15 @@ def transcribe_video(
     else:
         print("  Diarization skipped (no HF_TOKEN).")
 
-    # 7. Merge translations onto main segments
-    translated = False
-    if translated_result is not None:
-        print("  Merging English translations into segments…")
-        trans_segs = translated_result.get("segments", translated_result if isinstance(translated_result, list) else [])
-        if isinstance(translated_result, dict) and "segments" in translated_result:
-            trans_segs = translated_result["segments"]
-        main_segs = result.get("segments", result if isinstance(result, list) else [])
-        if isinstance(result, dict) and "segments" in result:
-            main_segs = result["segments"]
-        _merge_translations(main_segs, trans_segs, detected_lang)
-        translated = True
-
     elapsed = time.time() - t0
 
-    # 8. Save
+    # 6. Save
     meta = {
         "model": model_name,
         "compute_type": compute_type,
         "diarization": diarized,
-        "detected_language": detected_lang,
-        "translated": translated,
+        "detected_language": "en",
+        "lang_detection_details": lang_details,
         "processing_time_s": elapsed,
     }
     out_path = save_transcript(video_path, result, meta)
@@ -383,15 +443,12 @@ def main() -> None:
         help="Re-transcribe even if transcript already exists",
     )
     parser.add_argument(
-        "--diarize-model", default=DEFAULT_DIARIZE_MODEL,
-        help=f"Pyannote diarization model (default: {DEFAULT_DIARIZE_MODEL})",
+        "--force-lang-check", action="store_true",
+        help="Re-run language detection on videos previously flagged as non-English",
     )
     parser.add_argument(
-        "--language", default=DEFAULT_LANGUAGE,
-        help=(
-            f"Language code for transcription (default: {DEFAULT_LANGUAGE}). "
-            "Use 'auto' for automatic detection, or an ISO 639-1 code like 'en', 'ru', 'ja'."
-        ),
+        "--diarize-model", default=DEFAULT_DIARIZE_MODEL,
+        help=f"Pyannote diarization model (default: {DEFAULT_DIARIZE_MODEL})",
     )
     parser.add_argument(
         "--no-diarize", action="store_true",
@@ -415,9 +472,10 @@ def main() -> None:
     print(f"  Device:       {device}")
     print(f"  Model:        {args.model}")
     print(f"  Compute type: {args.compute_type}")
-    print(f"  Language:     {args.language}")
-    print(f"  Diarization:  {'yes — ' + args.diarize_model if hf_token else 'no (HF_TOKEN not set)'}")
+    print(f"  Output lang:  English (non-English videos skipped)")
+    print(f"  Diarization:  {'yes \u2014 ' + args.diarize_model if hf_token else 'no (HF_TOKEN not set)'}")
     print(f"  Transcripts:  {TRANSCRIPTS_DIR}")
+    print(f"  Non-English:  {NON_ENGLISH_JSONL}")
 
     # Collect videos to process
     if args.file:
@@ -435,6 +493,17 @@ def main() -> None:
     if not args.force:
         videos = [v for v in videos if not already_transcribed(v)]
 
+    # Filter videos previously flagged as non-English
+    if not args.force_lang_check:
+        non_english_stems = load_non_english_set()
+        before = len(videos)
+        videos = [v for v in videos if v.stem not in non_english_stems]
+        skipped_lang = before - len(videos)
+        if skipped_lang:
+            print(f"  Skipped (non-English): {skipped_lang}")
+    else:
+        non_english_stems = set()
+
     if args.limit > 0:
         videos = videos[: args.limit]
 
@@ -445,19 +514,26 @@ def main() -> None:
         return
 
     # Process
+    # Use a live queue so that newly downloaded videos discovered between
+    # transcriptions are automatically picked up and appended.
     successes = 0
     failures = 0
+    non_english_count = 0
     total_start = time.time()
+    queue: list[Path] = list(videos)
+    seen_videos: set[Path] = set(queue)  # track every path ever enqueued
 
-    for i, video in enumerate(videos, 1):
-        print(f"\n[{i}/{len(videos)}]")
+    i = 0
+    while i < len(queue):
+        video = queue[i]
+        i += 1
+        print(f"\n[{i}/{len(queue)}]")
         try:
             out_path = transcribe_video(
                 video,
                 model_name=args.model,
                 batch_size=args.batch_size,
                 compute_type=args.compute_type,
-                language=args.language,
                 hf_token=hf_token,
                 diarize_model_name=args.diarize_model,
                 device=device,
@@ -473,6 +549,20 @@ def main() -> None:
                 "ts": int(time.time()),
             })
             successes += 1
+        except NonEnglishError as exc:
+            print(f"  \u2717 NON-ENGLISH: {exc}")
+            append_jsonl(NON_ENGLISH_JSONL, {
+                "video_file": video.name,
+                "video_stem": video.stem,
+                "video_path": str(video),
+                "detected_language": exc.detected_lang,
+                "english_fraction": exc.details["english_fraction"],
+                "vote_counts": exc.details["vote_counts"],
+                "samples": exc.details["samples"],
+                "detection_time_s": round(exc.elapsed, 2),
+                "ts": int(time.time()),
+            })
+            non_english_count += 1
         except Exception as exc:
             print(f"  ✗ FAILED: {exc}")
             append_jsonl(TRANSCRIPT_LOG_JSONL, {
@@ -484,9 +574,26 @@ def main() -> None:
             })
             failures += 1
 
+        # Rescan download directories for videos added since the last check
+        if not args.file:
+            transcribed = load_transcribed_set()
+            non_english_stems = load_non_english_set()
+            for new_video in find_videos(DOWNLOAD_DIR, EXISTING_DOWNLOAD_DIR):
+                if new_video not in seen_videos and (
+                    args.force or new_video.stem not in transcribed
+                ) and (
+                    args.force_lang_check or new_video.stem not in non_english_stems
+                ):
+                    print(f"  + Discovered new video: {new_video.name}")
+                    queue.append(new_video)
+                    seen_videos.add(new_video)
+            if len(queue) > i:
+                print(f"  Queue: {i} done, {len(queue) - i} remaining (including any new)")
+
     total_time = time.time() - total_start
     print(f"\n{'=' * 70}")
-    print(f"Transcription complete: {successes} ok, {failures} failed in {total_time:.1f}s")
+    print(f"Transcription complete: {successes} ok, {non_english_count} non-English, "
+          f"{failures} failed in {total_time:.1f}s")
     print(f"{'=' * 70}")
 
 

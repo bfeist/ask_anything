@@ -44,9 +44,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from astro_ia_harvest.config import (  # noqa: E402
+    CLASSIFY_DIR,
     DEFAULT_OLLAMA_MODEL,
     DEFAULT_OLLAMA_URL,
+    QA_DIR,
     TRANSCRIPTS_DIR,
+    ensure_directories,
     env_or_default,
 )
 from astro_ia_harvest.ollama_client import call_ollama, extract_json  # noqa: E402
@@ -61,11 +64,21 @@ from astro_ia_harvest.transcript_utils import (  # noqa: E402
 # Event types and prompt routing
 # ---------------------------------------------------------------------------
 
-EVENT_TYPES = ("student_qa", "press_conference", "panel", "other")
+EVENT_TYPES = (
+    "student_qa",
+    "press_conference",
+    "media_interview",
+    "panel",
+    "produced_content",
+    "other",
+)
+
+# Event types that should skip Q&A extraction entirely
+SKIP_EXTRACTION_TYPES = {"produced_content"}
 
 # For student Q&A, plain transcript works better (proven).
-# For press conferences, diarized labels help.
-USE_DIARIZATION_FOR = {"press_conference", "panel"}
+# For press conferences and media interviews, diarized labels help.
+USE_DIARIZATION_FOR = {"press_conference", "media_interview", "panel"}
 
 # ---------------------------------------------------------------------------
 # Extraction prompts  (timestamps-only — no names / affiliations)
@@ -102,34 +115,100 @@ You are a precise transcript analyst. Your job is to identify the time boundarie
 ALL question-and-answer exchanges in this NASA press conference transcript.
 
 The transcript has timestamps and speaker labels (SPEAKER_XX). The typical pattern: \
-a moderator introduces a reporter, the reporter asks one or more questions, then one \
-or more panelists/crew answer. Multi-part questions from the same reporter count as \
-ONE question block.
+a moderator introduces a reporter/host, the reporter/host asks one or more questions, \
+then one or more panelists/crew members answer. Multi-part questions from the same \
+speaker count as ONE question block.
+
+WHAT COUNTS AS A QUESTION:
+- A genuine interrogative or request for information directed at panelists/crew.
+- Must contain a question mark or be a clear request like "Tell us about..." or \
+"Describe...".
+- Short handoffs like "go ahead" or phrases like "I'll echo that" are NOT questions.
+- Voice checks, greetings, and protocol exchanges are NOT questions.
+
+WHAT DOES NOT COUNT:
+- Opening speeches, prepared remarks, or introductory bios — no matter how many \
+speaker changes occur during them.
+- A panelist setting context or expanding on someone else's statement.
+- The moderator handing over to the next speaker.
+- Closing remarks or thank-you exchanges.
 
 CRITICAL RULES:
-- Do NOT include opening statements, prepared remarks, biographies, or moderator \
-logistics as Q&A pairs. Only include actual QUESTIONS followed by answers.
-- Opening statements typically happen before the first reporter question. Skip them.
-- The Q&A portion usually begins when the moderator says something like "we'll now \
-take questions" or "first question goes to...".
-- Output items in CHRONOLOGICAL ORDER by question_start timestamp.
+1. A Q&A pair MUST involve at least two different speakers — someone who asks and \
+someone DIFFERENT who answers. If the same speaker asks AND answers, it is NOT valid.
+2. question_start to question_end is the ENTIRE span where the questioner speaks, \
+including setup/context/multi-part questions.
+3. answer_start to answer_end covers ONLY the respondent (a different speaker). \
+Do NOT include the questioner's own statements in the answers array.
+4. If the questioner speaks again after the respondent, that starts a NEW exchange, \
+not part of the previous answer.
+5. Each answer segment must be at least 10 seconds long — brief acknowledgments \
+("thank you", "okay", "go ahead") are NOT answers.
+6. Output items in CHRONOLOGICAL ORDER by question_start timestamp.
 
 Your task:
-1. Identify EVERY question and ALL subsequent answer(s).
-2. Use speaker labels to help determine answer boundaries.
-3. If MULTIPLE panelists answer the SAME question in sequence, include EACH as a \
-separate entry in the "answers" array — do NOT create duplicate question entries.
+1. Identify EVERY real question and ALL subsequent answer(s) from different speakers.
+2. Use speaker labels to determine boundaries. When the speaker changes from the \
+respondent back to a questioner, the answer ends.
+3. If MULTIPLE panelists answer the SAME question (different speakers), include EACH \
+as a separate entry in the "answers" array.
 4. For each Q&A pair output ONLY:
-   - question_start: timestamp where the question starts
-   - question_end: timestamp where the question ends
-   - answers: An array of answer objects, one per respondent:
+   - question_start: timestamp where the questioner starts speaking
+   - question_end: timestamp where the questioner finishes (before a DIFFERENT \
+speaker begins answering)
+   - answers: Array of answer objects from DIFFERENT speaker(s) than the questioner:
      [{"answer_start": <float>, "answer_end": <float>}, ...]
-     The last answer's answer_end should be just before the next transition.
 
 Do NOT include any text, names, or affiliations — ONLY timestamps.
 IMPORTANT: Process the ENTIRE transcript from start to finish. Do NOT stop early.
 A typical NASA press conference has 10-15 questions. If you have found fewer than 8, \
-re-scan the transcript for questions you may have missed.
+re-scan the transcript.
+
+Respond ONLY with a JSON array of objects. No markdown fencing, no commentary.\
+"""
+
+EXTRACT_PROMPT_MEDIA_INTERVIEW = """\
+You are a precise transcript analyst. Your job is to identify the time boundaries of \
+ALL question-and-answer exchanges in this NASA media interview transcript.
+
+This is a TV station, radio, or newspaper interview with an astronaut on the \
+International Space Station. The typical pattern: a host/anchor asks questions, and \
+the astronaut answers. Sometimes there are 2 astronauts answering.
+
+The transcript has timestamps and speaker labels (SPEAKER_XX).
+
+CRITICAL RULES:
+1. A Q&A pair MUST involve at least two different speakers — the host who asks and \
+the astronaut(s) who answer. If the same speaker asks AND "answers," it is NOT a \
+valid Q&A pair.
+2. question_start to question_end covers the ENTIRE span where the host speaks \
+their question, including setup and context.
+3. answer_start to answer_end covers ONLY the astronaut's response (a DIFFERENT \
+speaker). Do NOT include the host's own statements in the answers array.
+4. If the host speaks again after the astronaut, that is either a new question or \
+a transition — NOT part of the previous answer.
+5. Do NOT include the host's introduction, greetings, sign-off, or Mission Control \
+voice checks as Q&A pairs.
+6. Only include actual QUESTIONS (interrogative statements or clear prompts) \
+followed by substantive answers from a different speaker.
+7. If both astronauts answer the same question sequentially, include EACH answer \
+as a separate entry in the "answers" array.
+8. Output items in CHRONOLOGICAL ORDER by question_start timestamp.
+
+Your task:
+1. Identify EVERY question from the interviewer and the astronaut's answer(s).
+2. Use speaker labels to determine boundaries — when the speaker changes from the \
+astronaut back to the host, the answer ends.
+3. For each Q&A pair output ONLY:
+   - question_start: timestamp where the host starts asking
+   - question_end: timestamp where the host finishes (before a DIFFERENT speaker \
+begins answering)
+   - answers: Array of answer objects from DIFFERENT speaker(s) than the host:
+     [{{"answer_start": <float>, "answer_end": <float>}}, ...]
+
+Do NOT include any text, names, or affiliations — ONLY timestamps.
+IMPORTANT: Process the ENTIRE transcript from start to finish. Do NOT stop early.
+A typical media interview has 5-15 questions.
 
 Respond ONLY with a JSON array of objects. No markdown fencing, no commentary.\
 """
@@ -139,17 +218,27 @@ You are a precise transcript analyst. Your job is to identify the time boundarie
 ALL question-and-answer exchanges in a NASA event transcript.
 
 The transcript has timestamps in seconds and may include speaker labels. Identify \
-every instance where someone asks a question and receives a substantive answer.
+every instance where someone asks a question and receives a substantive answer \
+from a DIFFERENT speaker.
+
+CRITICAL RULES:
+1. A Q&A pair MUST involve at least two different speakers — one who asks and one \
+who answers. If only one speaker is talking, it is NOT a Q&A pair.
+2. Only include actual QUESTIONS followed by substantive answers.
+3. Do NOT include opening remarks, prepared statements, speeches, or closing remarks.
+4. A "question" must be an interrogative statement or a clear prompt for information \
+from one speaker, followed by a response from a DIFFERENT speaker.
+5. The answer MUST be from a different speaker than the questioner.
+6. Output items in CHRONOLOGICAL ORDER by question_start.
 
 Your task:
 1. Identify EVERY Q&A exchange from beginning to end.
 2. Skip opening remarks, prepared statements, and closing remarks.
-3. Output items in CHRONOLOGICAL ORDER by question_start.
-4. For each Q&A pair output ONLY:
+3. For each Q&A pair output ONLY:
    - question_start: timestamp where the question begins
    - question_end: timestamp where the question ends
-   - answers: An array of answer objects, one per respondent:
-     [{"answer_start": <float>, "answer_end": <float>}, ...]
+   - answers: Array of answer objects from DIFFERENT speaker(s) than the questioner:
+     [{{"answer_start": <float>, "answer_end": <float>}}, ...]
 
 Do NOT include any text, names, or affiliations — ONLY timestamps.
 IMPORTANT: Process the ENTIRE transcript. Do NOT stop early.
@@ -160,6 +249,7 @@ Respond ONLY with a JSON array of objects. No markdown fencing, no commentary.\
 EXTRACT_PROMPTS = {
     "student_qa": EXTRACT_PROMPT_STUDENT_QA,
     "press_conference": EXTRACT_PROMPT_PRESS_CONFERENCE,
+    "media_interview": EXTRACT_PROMPT_MEDIA_INTERVIEW,
     "panel": EXTRACT_PROMPT_GENERIC,
     "other": EXTRACT_PROMPT_GENERIC,
 }
@@ -180,7 +270,7 @@ def run_extraction(
 
     Returns (qa_pairs, elapsed_seconds, raw_response_summary).
     """
-    system_prompt = EXTRACT_PROMPTS[event_type]
+    system_prompt = EXTRACT_PROMPTS.get(event_type, EXTRACT_PROMPTS["other"])
 
     has_diarization = any(s.get("speaker") for s in segments)
     use_diarized = event_type in USE_DIARIZATION_FOR and has_diarization
@@ -191,6 +281,9 @@ def run_extraction(
     CHUNK_DURATION = 600.0   # 10 minutes per chunk
     OVERLAP = 60.0           # 1 minute overlap
     total_duration = segments[-1]["end"] if segments else 0
+
+    if not segments:
+        return None, 0.0, "(empty transcript — no segments)"
 
     if total_duration <= CHUNK_DURATION * 2.5:
         # Under ~25 minutes — process in one shot
@@ -213,6 +306,9 @@ def run_extraction(
     print(f"  Processing {len(chunks)} chunk(s) via {model} ({label}, {event_type})...")
 
     for ci, chunk in enumerate(chunks, 1):
+        if not chunk:
+            print(f"    Chunk {ci}/{len(chunks)}: empty — skipping")
+            continue
         formatted = format_fn(chunk)
         t_start = chunk[0]["start"]
         t_end = chunk[-1]["end"]
@@ -317,17 +413,33 @@ def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
 
     sorted_pairs = sorted(merged, key=lambda x: x.get("question_start", 0))
 
-    # Step 5: absorb chunk-overlap artifacts — entries whose question_start
-    # falls within a prior entry's answer range (and have NO identifying info).
+    # Step 5: absorb chunk-overlap artifacts — entries whose question
+    # window overlaps with a prior entry's question window (same question
+    # detected in overlapping chunks).  We ONLY merge when the new pair's
+    # question significantly overlaps the previous pair's question or answer
+    # range AND the new pair starts within the overlap region.  Adjacent
+    # pairs (next question starts right after previous answer) must NOT
+    # be merged — they are separate Q&A exchanges.
+    OVERLAP_TOLERANCE = 5.0  # seconds of slack for chunk-boundary artifacts
     cleaned: list[dict] = []
     for p in sorted_pairs:
         if cleaned:
             prev = cleaned[-1]
+            prev_qe = prev.get("question_end", 0)
             prev_answer_end = max(
                 (a.get("answer_end", 0) for a in prev.get("answers", [])), default=0
             )
             qs = p.get("question_start", 0)
-            if qs <= prev_answer_end:
+            qe = p.get("question_end", 0)
+
+            # Only merge if the NEW question starts BEFORE the previous
+            # question ends (genuine duplicate) — not merely before the
+            # previous answer ends (which would be a separate exchange).
+            is_dup_question = qs < prev_qe - OVERLAP_TOLERANCE
+
+            if is_dup_question:
+                # Merge: extend question window, fold in new answers
+                prev["question_end"] = max(prev_qe, qe)
                 existing_starts = {a.get("answer_start") for a in prev["answers"]}
                 for a in p.get("answers", []):
                     a_start = a.get("answer_start", 0)
@@ -340,7 +452,62 @@ def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
                 continue
         cleaned.append(p)
 
-    return cleaned
+    # Step 6: fix / filter pairs with overlapping Q/A timestamps.
+    # The LLM sometimes sets answer_start = question_start. Fix these
+    # by bumping answer_start to question_end. Drop answers that are
+    # entirely contained within the question with no extension beyond.
+    valid: list[dict] = []
+    for p in cleaned:
+        qs = p.get("question_start", 0)
+        qe = p.get("question_end", 0)
+        answers = p.get("answers", [])
+
+        good_answers = []
+        for a in answers:
+            a_start = a.get("answer_start", 0)
+            a_end = a.get("answer_end", 0)
+
+            # If answer starts before question ends but extends beyond,
+            # fix the start to be at question_end
+            if a_start < qe and a_end > qe + 1.0:
+                a["answer_start"] = qe
+                good_answers.append(a)
+            # Answer starts after question — always valid
+            elif a_start >= qe - 1.0:
+                good_answers.append(a)
+            # Answer completely inside question range but much longer
+            elif (a_end - a_start) > 3 * max(qe - qs, 1) and (a_end - a_start) > 10:
+                a["answer_start"] = qe
+                good_answers.append(a)
+            # Otherwise it's garbage — skip this answer
+
+        if good_answers:
+            p["answers"] = good_answers
+            valid.append(p)
+
+    # Step 7: trim answer ranges that overlap into the NEXT pair's question.
+    # When the LLM tracks interleaved threads it sometimes assigns answer
+    # chunks that temporally belong to the next exchange.  Drop answers
+    # that start after the next question begins; trim answers that merely
+    # extend past the next question start.
+    for i in range(len(valid) - 1):
+        next_qs = valid[i + 1].get("question_start", 0)
+        trimmed = []
+        for a in valid[i].get("answers", []):
+            a_start = a.get("answer_start", 0)
+            a_end = a.get("answer_end", 0)
+            if a_start >= next_qs:
+                continue  # answer belongs to the next exchange
+            if a_end > next_qs:
+                a["answer_end"] = next_qs  # trim overlap
+            if a["answer_end"] - a.get("answer_start", 0) > 2.0:
+                trimmed.append(a)
+        valid[i]["answers"] = trimmed
+
+    # Remove pairs that lost all answers after trimming
+    valid = [p for p in valid if p.get("answers")]
+
+    return valid
 
 
 def compute_coverage(qa_pairs: list[dict], segments: list[dict]) -> dict:
@@ -414,7 +581,7 @@ def print_qa_preview(qa_pairs: list[dict], segments: list[dict]) -> None:
 
 def _load_classification(transcript_path: Path) -> tuple[str, str] | None:
     """Try to load a pre-computed .classify.json for this transcript."""
-    cls_path = transcript_path.with_suffix(".classify.json")
+    cls_path = CLASSIFY_DIR / (transcript_path.stem + ".classify.json")
     if cls_path.exists():
         try:
             cls = json.loads(cls_path.read_text(encoding="utf-8"))
@@ -424,47 +591,24 @@ def _load_classification(transcript_path: Path) -> tuple[str, str] | None:
     return None
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Stage 5b: Extract Q&A time boundaries from transcript"
-    )
-    parser.add_argument(
-        "--transcript", type=Path,
-        help="Path to transcript JSON. Defaults to first file in transcripts dir.",
-    )
-    parser.add_argument("--model", default=env_or_default("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL))
-    parser.add_argument("--ollama-url", default=env_or_default("OLLAMA_URL", DEFAULT_OLLAMA_URL))
-    parser.add_argument("--temperature", type=float, default=0.1)
-    parser.add_argument(
-        "--event-type", choices=EVENT_TYPES, default=None,
-        help="Skip classification and use this event type directly.",
-    )
-    parser.add_argument(
-        "--preview", action="store_true",
-        help="Also print a human-readable preview with text sliced from transcript.",
-    )
-    args = parser.parse_args()
-
-    # Find transcript
-    if args.transcript:
-        transcript_path = args.transcript
-    else:
-        jsons = sorted(TRANSCRIPTS_DIR.glob("*.json"))
-        jsons = [j for j in jsons if ".qa" not in j.name and ".classify" not in j.name]
-        if not jsons:
-            print("No transcript files found in", TRANSCRIPTS_DIR)
-            sys.exit(1)
-        transcript_path = jsons[0]
-
-    print(f"Transcript: {transcript_path.name}")
-    print(f"Model: {args.model}")
+def process_transcript(
+    transcript_path: Path,
+    *,
+    model: str,
+    ollama_url: str,
+    temperature: float,
+    event_type_override: str | None,
+    preview: bool,
+) -> bool:
+    """Extract Q&A from a single transcript.  Returns True on success."""
+    print(f"\nTranscript: {transcript_path.name}")
 
     data = load_transcript(transcript_path)
     segments = data["segments"]
 
     # Resolve event type: CLI flag > .classify.json > inline classification
-    if args.event_type:
-        event_type = args.event_type
+    if event_type_override:
+        event_type = event_type_override
         confidence = "override"
         print(f"  Event type: {event_type} (user override)")
     else:
@@ -485,22 +629,56 @@ def main() -> None:
 
             print("  No .classify.json found — classifying inline...")
             event_type, confidence = classify_event(
-                segments, args.ollama_url, args.model, args.temperature,
+                segments, ollama_url, model, temperature,
+                transcript_filename=transcript_path.name,
             )
             print(f"  Event type: {event_type} (confidence: {confidence})")
 
     # Extraction
+    if not segments:
+        print(f"  Skipping Q&A extraction — transcript has no segments.")
+        output = {
+            "transcript_file": transcript_path.name,
+            "model": model,
+            "event_type": event_type,
+            "event_type_confidence": confidence,
+            "extracted_at": datetime.now(timezone.utc).isoformat(),
+            "skipped": True,
+            "skip_reason": "Empty transcript (no segments).",
+            "qa_pairs": [],
+        }
+        out_path = QA_DIR / (transcript_path.stem + ".qa.json")
+        out_path.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"  Saved (skipped): {out_path}")
+        return True
+
+    if event_type in SKIP_EXTRACTION_TYPES:
+        print(f"  Skipping Q&A extraction for event type '{event_type}' (no Q&A expected).")
+        # Save a minimal output indicating skip
+        output = {
+            "transcript_file": transcript_path.name,
+            "model": model,
+            "event_type": event_type,
+            "event_type_confidence": confidence,
+            "extracted_at": datetime.now(timezone.utc).isoformat(),
+            "skipped": True,
+            "skip_reason": f"Event type '{event_type}' does not contain Q&A content.",
+            "qa_pairs": [],
+        }
+        out_path = QA_DIR / (transcript_path.stem + ".qa.json")
+        out_path.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"  Saved (skipped): {out_path}")
+        return True
+
     qa_pairs, elapsed, raw = run_extraction(
-        segments, event_type,
-        args.ollama_url, args.model,
-        temperature=args.temperature,
+        segments, event_type, ollama_url, model, temperature=temperature,
     )
 
     if qa_pairs is None:
         print("\nFAILED to parse JSON from response.")
         print("Raw response (first 1000 chars):")
         print(raw[:1000])
-        sys.exit(1)
+        return False
 
     # Summary
     print(f"\n  {len(qa_pairs)} Q&A pairs found in {elapsed:.1f}s")
@@ -513,7 +691,7 @@ def main() -> None:
         print(f"  {i:2d}. [{qs:>7}s-{qe:>7}s]  {n_ans} answer(s), ends {last_end}s")
 
     # Optional preview
-    if args.preview:
+    if preview:
         print_qa_preview(qa_pairs, segments)
 
     # Coverage analysis
@@ -529,7 +707,7 @@ def main() -> None:
     # Save — timestamps-only output
     output = {
         "transcript_file": transcript_path.name,
-        "model": args.model,
+        "model": model,
         "event_type": event_type,
         "event_type_confidence": confidence,
         "extracted_at": datetime.now(timezone.utc).isoformat(),
@@ -537,9 +715,101 @@ def main() -> None:
     }
     if coverage["gaps"]:
         output["coverage_gaps"] = coverage["gaps"]
-    out_path = transcript_path.with_suffix(".qa.json")
+    out_path = QA_DIR / (transcript_path.stem + ".qa.json")
     out_path.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"\nSaved to: {out_path}")
+    print(f"  Saved: {out_path}")
+    return True
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Stage 5b: Extract Q&A time boundaries from transcripts"
+    )
+    parser.add_argument(
+        "--transcript", type=Path, default=None,
+        help="Process a single transcript JSON instead of all transcripts.",
+    )
+    parser.add_argument("--model", default=env_or_default("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL))
+    parser.add_argument("--ollama-url", default=env_or_default("OLLAMA_URL", DEFAULT_OLLAMA_URL))
+    parser.add_argument("--temperature", type=float, default=0.1)
+    parser.add_argument(
+        "--event-type", choices=EVENT_TYPES, default=None,
+        help="Skip classification and use this event type directly (single-file mode only).",
+    )
+    parser.add_argument(
+        "--preview", action="store_true",
+        help="Print a human-readable preview with text sliced from transcript.",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Re-extract even if a .qa.json already exists.",
+    )
+    args = parser.parse_args()
+
+    ensure_directories()
+
+    print("=" * 70)
+    print("Stage 5b: Q&A Extraction")
+    print("=" * 70)
+    print(f"  Model:       {args.model}")
+    print(f"  Ollama URL:  {args.ollama_url}")
+    print(f"  Temperature: {args.temperature}")
+
+    # Collect transcripts to process
+    if args.transcript:
+        if not args.transcript.exists():
+            print(f"ERROR: File not found: {args.transcript}")
+            sys.exit(1)
+        transcripts = [args.transcript]
+    else:
+        transcripts = sorted(
+            p for p in TRANSCRIPTS_DIR.glob("*.json")
+            if ".qa" not in p.name and ".classify" not in p.name
+        )
+
+    print(f"  Transcripts found: {len(transcripts)}")
+
+    # Filter already-processed unless --force
+    if not args.force:
+        pending = [
+            t for t in transcripts
+            if not (QA_DIR / (t.stem + ".qa.json")).exists()
+        ]
+    else:
+        pending = list(transcripts)
+
+    skipped = len(transcripts) - len(pending)
+    if skipped:
+        print(f"  Already extracted: {skipped} (use --force to redo)")
+    print(f"  To process: {len(pending)}")
+
+    if not pending:
+        print("\nNothing to do.")
+        return
+
+    successes = 0
+    failures = 0
+    total_start = time.time()
+
+    for i, transcript_path in enumerate(pending, 1):
+        print(f"\n[{i}/{len(pending)}]")
+        ok = process_transcript(
+            transcript_path,
+            model=args.model,
+            ollama_url=args.ollama_url,
+            temperature=args.temperature,
+            event_type_override=args.event_type,
+            preview=args.preview,
+        )
+        if ok:
+            successes += 1
+        else:
+            failures += 1
+
+    total_time = time.time() - total_start
+    print(f"\n{'=' * 70}")
+    print(f"Extraction complete: {successes} ok, {failures} failed in {total_time:.1f}s")
+    print(f"{'=' * 70}")
 
 
 if __name__ == "__main__":

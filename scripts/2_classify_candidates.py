@@ -19,6 +19,7 @@ from astro_ia_harvest.config import (  # noqa: E402
     env_or_default,
     ensure_directories,
 )
+from astro_ia_harvest.iss_topic_filter import classify_iss_relevance  # noqa: E402
 from astro_ia_harvest.jsonl_utils import append_jsonl, load_jsonl  # noqa: E402
 from astro_ia_harvest.ollama_client import classify_filename_with_ollama  # noqa: E402
 
@@ -61,6 +62,18 @@ def classify_record(
         method = "ollama_fallback"
 
     likely_relevant = decision == "keep"
+
+    # ── ISS topic filter: reject files that are clearly not space-station ──
+    iss_decision = None
+    iss_reason = None
+    if likely_relevant:
+        iss_decision, iss_reason = classify_iss_relevance(ident, [filename])
+        if iss_decision == "reject":
+            likely_relevant = False
+            decision = "reject"
+            reason = f"iss_topic_filter: {iss_reason}"
+            method = f"{method}+iss_filter"
+
     return {
         "identifier": ident,
         "filename": filename,
@@ -71,6 +84,8 @@ def classify_record(
         "model": ollama_model,
         "confidence": confidence,
         "reason": reason,
+        "iss_filter": iss_decision,
+        "iss_filter_reason": iss_reason,
         "classified_at": int(time.time()),
     }
 

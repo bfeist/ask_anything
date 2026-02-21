@@ -22,6 +22,12 @@ DOWNLOAD_FAILURES_JSONL = DATA_DIR / "download_failures.jsonl"
 # Transcription outputs
 TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
 TRANSCRIPT_LOG_JSONL = DATA_DIR / "transcript_log.jsonl"
+NON_ENGLISH_JSONL = DATA_DIR / "non_english_videos.jsonl"
+
+# Stage 5 outputs
+CLASSIFY_DIR = DATA_DIR / "classify"
+QA_DIR = DATA_DIR / "qa"
+QA_TEXT_DIR = DATA_DIR / "qa_text"
 
 # Existing cache from the other project. Files found here will be treated as already downloaded.
 EXISTING_DOWNLOAD_DIR = Path(r"D:\ISSiRT_ia_videos_raw")
@@ -47,6 +53,9 @@ def ensure_directories() -> None:
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+    CLASSIFY_DIR.mkdir(parents=True, exist_ok=True)
+    QA_DIR.mkdir(parents=True, exist_ok=True)
+    QA_TEXT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def env_or_default(name: str, default: str) -> str:

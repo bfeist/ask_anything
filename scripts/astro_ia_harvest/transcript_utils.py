@@ -85,9 +85,32 @@ def slice_segments(
     end: float,
     prefer_english: bool = True,
 ) -> str:
-    """Return concatenated text from all segments overlapping [start, end]."""
+    """Return concatenated text from all segments overlapping [start, end].
+
+    Uses word-level timestamps when available for precise boundary slicing.
+    Each word is included at most once based on its midpoint falling within
+    the [start, end) window, preventing text duplication at boundaries.
+    Falls back to segment-level slicing if word timestamps are unavailable.
+    """
     parts: list[str] = []
     for seg in segments:
-        if seg["end"] >= start and seg["start"] <= end:
-            parts.append(seg_text(seg, prefer_english))
+        # Quick skip: segment doesn't overlap window at all
+        if seg["end"] <= start or seg["start"] >= end:
+            continue
+        words = seg.get("words")
+        if words:
+            # Word-level precision: include a word if its midpoint is in [start, end)
+            for w in words:
+                w_start = w.get("start")
+                w_end = w.get("end")
+                if w_start is None or w_end is None:
+                    continue
+                midpoint = (w_start + w_end) / 2
+                if start <= midpoint < end:
+                    parts.append(w.get("word", ""))
+        else:
+            # Fallback: segment-level with midpoint check
+            midpoint = (seg["start"] + seg["end"]) / 2
+            if start <= midpoint < end:
+                parts.append(seg_text(seg, prefer_english))
     return " ".join(parts)
