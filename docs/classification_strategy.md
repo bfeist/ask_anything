@@ -4,9 +4,19 @@
 
 All classification is done via Ollama (local LLM). The model receives the filename,
 title, description, and subject for each candidate video file and returns a keep/reject
-decision with confidence and reasoning. Correctly identifies interviews, press conferences,
-discussions, profile pieces, and Q&A sessions while rejecting animations, resource reels,
-docking footage, and operational B-roll.
+decision with confidence and reasoning.
+
+The classifier is tightly aligned with the downstream event types defined in
+`5a_classify_event.py`. It specifically targets:
+
+- **student_qa** — School downlinks, ARISS contacts, education inflight events
+- **press_conference** — News conferences, pre/post-flight briefings
+- **media_interview** — Astronaut interviews with named TV/radio/media outlets
+- **panel** — Panel discussions or roundtables
+
+Everything else (Space to Ground segments, launch/landing ops coverage, spacewalk
+feeds, resource reels, highlights packages, ceremonies, raw camera feeds, training
+footage, etc.) is rejected to avoid downloading thousands of irrelevant files.
 
 ## Ollama Prompt Contract
 

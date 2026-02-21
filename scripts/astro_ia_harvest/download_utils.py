@@ -5,8 +5,15 @@ from pathlib import Path
 
 
 def canonical_video_key(name: str) -> str:
-    """Normalize a filename to a stable key so renamed historical files still match."""
+    """Normalize a filename to a stable key so renamed historical files still match.
+
+    Strips leading ISO-like date prefixes (e.g. ``2019-02-07T16-34-39_``) so
+    that files from the ISSiRT archive (which carry such prefixes) match the
+    same videos downloaded here without them.
+    """
     raw = Path(name).name.lower()
+    # Strip date-time prefix: 2019-02-07T16-34-39_ (ISSiRT naming convention)
+    raw = re.sub(r"^\d{4}-\d{2}-\d{2}t\d{2}-\d{2}-\d{2}_", "", raw)
     raw = raw.replace(".ia.mp4", "")
     raw = raw.replace("_lowres", "")
     while True:

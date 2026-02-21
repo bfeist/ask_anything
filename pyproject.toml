@@ -5,6 +5,9 @@ description = "Internet Archive astronaut interview and Q&A video harvester"
 requires-python = ">=3.11"
 dependencies = [
   "requests>=2.32.0",
+  "aiohttp>=3.9.0",
+  "aiofiles>=24.1.0",
+  "rich>=13.0.0",
   "whisperx>=3.7.0,<3.8.0",
   "pyannote-audio>=3.3.0,<3.4.0",
   "torch>=2.6.0",

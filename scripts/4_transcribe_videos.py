@@ -66,7 +66,7 @@ DEFAULT_WHISPER_MODEL = "large-v3"
 DEFAULT_BATCH_SIZE = 16  # reduce if VRAM is tight
 DEFAULT_COMPUTE_TYPE = "float16"
 DEFAULT_DIARIZE_MODEL = "pyannote/speaker-diarization-3.1"
-LANGUAGE = "en"
+DEFAULT_LANGUAGE = "auto"  # "auto" = detect from audio; or force e.g. "en", "ru"
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +112,10 @@ def save_transcript(video_path: Path, result: dict, meta: dict) -> Path:
             "end": round(seg["end"], 3),
             "text": seg.get("text", "").strip(),
         }
+        if seg.get("text_en"):
+            clean_seg["text_en"] = seg["text_en"].strip()
+        if "language" in seg:
+            clean_seg["language"] = seg["language"]
         if "speaker" in seg:
             clean_seg["speaker"] = seg["speaker"]
         # Keep word-level timestamps if present (useful for precise seeking)
@@ -132,7 +136,8 @@ def save_transcript(video_path: Path, result: dict, meta: dict) -> Path:
         "video_file": video_path.name,
         "video_path": str(video_path),
         "model": meta["model"],
-        "language": LANGUAGE,
+        "language": meta.get("detected_language", "en"),
+        "translated": meta.get("translated", False),
         "diarization": meta["diarization"],
         "compute_type": meta["compute_type"],
         "transcribed_at": datetime.now(timezone.utc).isoformat(),
@@ -151,12 +156,32 @@ def save_transcript(video_path: Path, result: dict, meta: dict) -> Path:
 # Core transcription
 # ---------------------------------------------------------------------------
 
+def _merge_translations(
+    original_segments: list[dict],
+    translated_segments: list[dict],
+    detected_lang: str,
+) -> None:
+    """Add ``text_en`` and ``language`` to original segments by timestamp overlap."""
+    for orig in original_segments:
+        orig["language"] = detected_lang
+        # Find translated segments that overlap with this original segment
+        overlapping = [
+            t for t in translated_segments
+            if t["end"] > orig["start"] and t["start"] < orig["end"]
+        ]
+        if overlapping:
+            eng_text = " ".join(t.get("text", "").strip() for t in overlapping)
+            if eng_text:
+                orig["text_en"] = eng_text
+
+
 def transcribe_video(
     video_path: Path,
     *,
     model_name: str = DEFAULT_WHISPER_MODEL,
     batch_size: int = DEFAULT_BATCH_SIZE,
     compute_type: str = DEFAULT_COMPUTE_TYPE,
+    language: str = DEFAULT_LANGUAGE,
     hf_token: str | None = None,
     diarize_model_name: str = DEFAULT_DIARIZE_MODEL,
     device: str = "cuda",
@@ -165,6 +190,10 @@ def transcribe_video(
 ) -> Path:
     """Run WhisperX transcription + alignment + optional diarization on a video.
 
+    When *language* is ``"auto"`` the language is detected from the audio.
+    If the detected language is not English a second translation pass is run
+    to produce ``text_en`` fields for each segment.
+
     Returns the path to the saved transcript JSON.
     """
     t0 = time.time()
@@ -172,44 +201,87 @@ def transcribe_video(
     print(f"Transcribing: {video_path.name}")
     print(f"  Path:      {video_path}")
     print(f"  Model:     {model_name}  Compute: {compute_type}  Device: {device}")
+    print(f"  Language:  {language}")
+
+    auto_detect = language == "auto"
 
     # 1. Load audio
     print("  Loading audio …")
     audio = whisperx.load_audio(str(video_path))
 
-    # 2. Transcribe
+    # 2. Transcribe (original language)
     print("  Running whisper transcription …")
     model = whisperx.load_model(
         model_name,
         device,
         compute_type=compute_type,
-        language=LANGUAGE,
+        **({}  if auto_detect else {"language": language}),
     )
-    result = model.transcribe(audio, batch_size=batch_size, language=LANGUAGE)
+    transcribe_kwargs: dict = {"batch_size": batch_size}
+    if not auto_detect:
+        transcribe_kwargs["language"] = language
+    result = model.transcribe(audio, **transcribe_kwargs)
+    detected_lang = result.get("language", language if not auto_detect else "en")
     num_raw = len(result.get("segments", []))
+    print(f"  Detected language: {detected_lang}")
     print(f"  Raw segments: {num_raw}")
+
+    # 3. Translation pass (if non-English and we want English translations)
+    translated_result = None
+    if detected_lang != "en":
+        print(f"  Running English translation pass (detected {detected_lang})…")
+        translated_result = model.transcribe(
+            audio, batch_size=batch_size, task="translate",
+        )
+        print(f"  Translation segments: {len(translated_result.get('segments', []))}")
 
     # Free model VRAM before alignment
     del model
     torch.cuda.empty_cache()
 
-    # 3. Align (for accurate per-word timestamps)
-    print("  Aligning timestamps …")
-    align_model, align_meta = whisperx.load_align_model(
-        language_code=LANGUAGE, device=device
-    )
-    result = whisperx.align(
-        result["segments"],
-        align_model,
-        align_meta,
-        audio,
-        device,
-        return_char_alignments=False,
-    )
-    del align_model
-    torch.cuda.empty_cache()
+    # 4. Align original text
+    lang_for_align = detected_lang if auto_detect else language
+    print(f"  Aligning timestamps ({lang_for_align})…")
+    try:
+        align_model, align_meta = whisperx.load_align_model(
+            language_code=lang_for_align, device=device
+        )
+        result = whisperx.align(
+            result["segments"],
+            align_model,
+            align_meta,
+            audio,
+            device,
+            return_char_alignments=False,
+        )
+        del align_model
+        torch.cuda.empty_cache()
+    except Exception as exc:
+        print(f"  ⚠ Alignment model not available for '{lang_for_align}': {exc}")
+        print("  Continuing with unaligned timestamps.")
 
-    # 4. Diarization (optional)
+    # 5. Align translated text (if we have a translation pass)
+    if translated_result is not None:
+        print("  Aligning English translation…")
+        try:
+            align_model_en, align_meta_en = whisperx.load_align_model(
+                language_code="en", device=device
+            )
+            translated_result = whisperx.align(
+                translated_result["segments"],
+                align_model_en,
+                align_meta_en,
+                audio,
+                device,
+                return_char_alignments=False,
+            )
+            del align_model_en
+            torch.cuda.empty_cache()
+        except Exception as exc:
+            print(f"  ⚠ English alignment failed: {exc}")
+            print("  Translations will use unaligned timestamps.")
+
+    # 6. Diarization (optional)
     diarized = False
     if hf_token:
         print("  Running speaker diarization …")
@@ -236,13 +308,28 @@ def transcribe_video(
     else:
         print("  Diarization skipped (no HF_TOKEN).")
 
+    # 7. Merge translations onto main segments
+    translated = False
+    if translated_result is not None:
+        print("  Merging English translations into segments…")
+        trans_segs = translated_result.get("segments", translated_result if isinstance(translated_result, list) else [])
+        if isinstance(translated_result, dict) and "segments" in translated_result:
+            trans_segs = translated_result["segments"]
+        main_segs = result.get("segments", result if isinstance(result, list) else [])
+        if isinstance(result, dict) and "segments" in result:
+            main_segs = result["segments"]
+        _merge_translations(main_segs, trans_segs, detected_lang)
+        translated = True
+
     elapsed = time.time() - t0
 
-    # 5. Save
+    # 8. Save
     meta = {
         "model": model_name,
         "compute_type": compute_type,
         "diarization": diarized,
+        "detected_language": detected_lang,
+        "translated": translated,
         "processing_time_s": elapsed,
     }
     out_path = save_transcript(video_path, result, meta)
@@ -300,6 +387,13 @@ def main() -> None:
         help=f"Pyannote diarization model (default: {DEFAULT_DIARIZE_MODEL})",
     )
     parser.add_argument(
+        "--language", default=DEFAULT_LANGUAGE,
+        help=(
+            f"Language code for transcription (default: {DEFAULT_LANGUAGE}). "
+            "Use 'auto' for automatic detection, or an ISO 639-1 code like 'en', 'ru', 'ja'."
+        ),
+    )
+    parser.add_argument(
         "--no-diarize", action="store_true",
         help="Skip diarization even if HF_TOKEN is set",
     )
@@ -321,6 +415,7 @@ def main() -> None:
     print(f"  Device:       {device}")
     print(f"  Model:        {args.model}")
     print(f"  Compute type: {args.compute_type}")
+    print(f"  Language:     {args.language}")
     print(f"  Diarization:  {'yes — ' + args.diarize_model if hf_token else 'no (HF_TOKEN not set)'}")
     print(f"  Transcripts:  {TRANSCRIPTS_DIR}")
 
@@ -362,6 +457,7 @@ def main() -> None:
                 model_name=args.model,
                 batch_size=args.batch_size,
                 compute_type=args.compute_type,
+                language=args.language,
                 hf_token=hf_token,
                 diarize_model_name=args.diarize_model,
                 device=device,
