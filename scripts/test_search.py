@@ -52,8 +52,16 @@ def load_index(index_dir: Path) -> tuple[dict, list[dict], np.ndarray]:
     questions = json.loads(questions_path.read_text(encoding="utf-8"))
 
     dim = meta["embedding_dim"]
-    raw = np.frombuffer(embeddings_path.read_bytes(), dtype=np.float32)
-    embeddings = raw.reshape(meta["num_questions"], dim)
+    dtype_str = meta.get("embedding_dtype", "float32")
+    np_dtype = np.float16 if dtype_str == "float16" else np.float32
+    raw = np.frombuffer(embeddings_path.read_bytes(), dtype=np_dtype)
+    embeddings = raw.reshape(meta["num_questions"], dim).astype(np.float32)
+
+    # Re-normalise after potential precision loss from float16 storage
+    if np_dtype == np.float16:
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        embeddings = embeddings / norms
 
     return meta, questions, embeddings
 
@@ -164,14 +172,14 @@ def run_batch_test(model, embeddings: np.ndarray, questions: list[dict]) -> None
 
     # Summary
     scores_arr = np.array(all_top_scores)
-    print(f"\n{'─' * 70}")
+    print(f"\n{'-' * 70}")
     print(f"  Queries:        {len(BATCH_QUERIES)}")
     print(f"  Avg top score:  {scores_arr.mean():.4f}")
     print(f"  Min top score:  {scores_arr.min():.4f}")
     print(f"  Max top score:  {scores_arr.max():.4f}")
     print(f"  Total time:     {total_time * 1000:.1f}ms")
     print(f"  Avg per query:  {total_time / len(BATCH_QUERIES) * 1000:.1f}ms")
-    print(f"{'─' * 70}")
+    print(f"{'-' * 70}")
 
 
 # ---------------------------------------------------------------------------

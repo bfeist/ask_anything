@@ -74,6 +74,10 @@ def classify_record(
             reason = f"iss_topic_filter: {iss_reason}"
             method = f"{method}+iss_filter"
 
+    # Carry through video size/length from IA metadata so downstream
+    # stages can detect content-duplicate uploads without re-fetching.
+    ia_meta = record.get("IA_file_metadata") or {}
+
     return {
         "identifier": ident,
         "filename": filename,
@@ -87,6 +91,8 @@ def classify_record(
         "iss_filter": iss_decision,
         "iss_filter_reason": iss_reason,
         "classified_at": int(time.time()),
+        "video_size": ia_meta.get("size"),
+        "video_length": ia_meta.get("length"),
     }
 
 

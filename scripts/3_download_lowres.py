@@ -51,6 +51,32 @@ from astro_ia_harvest.download_utils import (  # noqa: E402
 )
 from astro_ia_harvest.jsonl_utils import load_jsonl  # noqa: E402
 
+
+def _build_content_signature_map(rows: list[dict]) -> dict[str, str]:
+    """Build a map from content-signature to canonical_video_key.
+
+    NASA sometimes uploads the same video under multiple IA identifiers
+    with different filenames.  By grouping classified candidates on
+    ``(video_size, video_length)`` we can detect these content duplicates
+    *before* downloading.  When two records share the same signature, the
+    first one seen wins; subsequent ones are skipped.
+
+    Returns ``{signature_str: canonical_video_key}``.
+    """
+    sig_map: dict[str, str] = {}
+    for r in rows:
+        if not r.get("likely_relevant"):
+            continue
+        size = r.get("video_size")
+        length = r.get("video_length")
+        if not size or not length:
+            continue
+        sig = f"{size}|{length}"
+        ck = canonical_video_key(str(r.get("filename", "")))
+        if sig not in sig_map:
+            sig_map[sig] = ck
+    return sig_map
+
 MAX_CONCURRENT_DOWNLOADS = 5
 MAX_RETRIES = 3
 RETRY_BACKOFF = [15, 45, 120]  # seconds to wait before retry 1, 2, 3
@@ -509,6 +535,9 @@ async def async_main(dry_run: bool, limit: int) -> None:
                 # Find only records we haven't queued yet, deduplicating by
                 # canonical video key so .mxf/.ia.mp4/.mp4 entries for the same
                 # video don't race to download the same output file.
+                # Also skip content-duplicates: different IA identifiers whose
+                # (video_size, video_length) match an already-queued record.
+                content_sigs = _build_content_signature_map(targets)
                 new_targets: list[dict] = []
                 for r in targets:
                     rk = _record_key(r)
@@ -519,6 +548,18 @@ async def async_main(dry_run: bool, limit: int) -> None:
                     if ck in existing_keys or ck in queued_video_keys:
                         skipped_prequeue += 1
                         continue
+                    # Content-signature dedup: skip if a different file with
+                    # identical (size, length) has already been queued/downloaded.
+                    size = r.get("video_size")
+                    length = r.get("video_length")
+                    if size and length:
+                        sig = f"{size}|{length}"
+                        first_ck = content_sigs.get(sig)
+                        if first_ck and first_ck != ck and (
+                            first_ck in existing_keys or first_ck in queued_video_keys
+                        ):
+                            skipped_prequeue += 1
+                            continue
                     queued_video_keys.add(ck)
                     new_targets.append(r)
 
