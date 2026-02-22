@@ -12,9 +12,13 @@ import argparse
 import asyncio
 import csv
 import json
+import re
+import shutil
 import sys
 import time
 from pathlib import Path
+
+_DATETIME_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_")
 
 import aiohttp
 import aiofiles
@@ -35,6 +39,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from astro_ia_harvest.config import (  # noqa: E402
     CLASSIFIED_JSONL,
     DOWNLOAD_DIR,
+    DOWNLOAD_404_TXT,
     DOWNLOAD_FAILURES_JSONL,
     DOWNLOAD_LOG_CSV,
     EXISTING_DOWNLOAD_DIR,
@@ -61,6 +66,27 @@ RETRYABLE_HTTP = {429, 503, 502, 504}  # server-side retryable status codes
 _recent_failures: list[float] = []   # timestamps of recent timeout/network failures
 _throttle_lock = None  # initialised to asyncio.Lock() inside async_main
 
+# Persistent skip-list: records that returned HTTP 404 on all URLs are never retried.
+_404_skip_keys: set[str] = set()
+
+
+def load_404_skip_keys() -> None:
+    """Populate _404_skip_keys from the on-disk file (one key per line)."""
+    if DOWNLOAD_404_TXT.exists():
+        for line in DOWNLOAD_404_TXT.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                _404_skip_keys.add(line)
+
+
+def save_404_key(key: str) -> None:
+    """Append a new key to the 404 skip-list file and the in-memory set."""
+    if key in _404_skip_keys:
+        return
+    _404_skip_keys.add(key)
+    with open(DOWNLOAD_404_TXT, "a", encoding="utf-8") as f:
+        f.write(key + "\n")
+
 
 console = Console(
     theme=Theme(
@@ -79,8 +105,13 @@ console = Console(
 # ------------------------------------------------------------------
 
 
-def load_existing_video_keys() -> set[str]:
+def load_existing_video_keys() -> tuple[set[str], dict[str, Path]]:
+    """Return (all_keys, existing_dir_map) where existing_dir_map maps
+    canonical_key -> source Path for files in EXISTING_DOWNLOAD_DIR that match
+    a likely_relevant record in the classified JSONL (i.e. ones we actually want)."""
     keys: set[str] = set()
+    existing_dir_map: dict[str, Path] = {}
+
     for p in DOWNLOAD_DIR.rglob("*.mp4"):
         keys.add(canonical_video_key(p.name))
         # For files we created with build_output_name (identifier__stem_lowres.mp4),
@@ -88,10 +119,23 @@ def load_existing_video_keys() -> set[str]:
         if "__" in p.stem:
             _, _, ia_part = p.name.partition("__")
             keys.add(canonical_video_key(ia_part))
+
     if EXISTING_DOWNLOAD_DIR.exists():
+        # Only copy files that are actually relevant — build the allowed key set first.
+        relevant_keys: set[str] = set()
+        for r in load_jsonl(CLASSIFIED_JSONL):
+            if r.get("likely_relevant"):
+                fname = str(r.get("filename", ""))
+                if fname:
+                    relevant_keys.add(canonical_video_key(fname))
+
         for p in EXISTING_DOWNLOAD_DIR.rglob("*.mp4"):
-            keys.add(canonical_video_key(p.name))
-    return keys
+            ck = canonical_video_key(p.name)
+            keys.add(ck)
+            if ck in relevant_keys:
+                existing_dir_map[ck] = p
+
+    return keys, existing_dir_map
 
 
 def _short_id(identifier: str, filename: str) -> str:
@@ -296,14 +340,15 @@ async def process_record(
             return "failed"
 
         source_key = canonical_video_key(filename)
-        if source_key in existing_keys:
-            append_csv_row(filename, ident, "skip_existing", "matched_existing_key")
-            return "skip_existing"
-
         output_name = build_output_name(ident, filename)
         output_path = DOWNLOAD_DIR / output_name
+
         if output_path.exists():
             append_csv_row(output_name, ident, "skip_existing", "already_in_download_dir")
+            return "skip_existing"
+
+        if source_key in existing_keys:
+            append_csv_row(filename, ident, "skip_existing", "matched_existing_key")
             return "skip_existing"
 
         urls = build_candidate_urls(ident, filename)
@@ -351,6 +396,11 @@ async def process_record(
         except OSError:
             pass
         console.print(f"{tag} [error]All attempts failed:[/error] {last_detail}")
+        # Persist 404s so they are never retried in future runs
+        if "http_404" in last_detail:
+            rk = _record_key(rec)
+            save_404_key(rk)
+            console.print(f"{tag} [warning]Saved to 404 skip-list[/warning]")
         return "failed"
 
 
@@ -359,16 +409,58 @@ async def process_record(
 # ------------------------------------------------------------------
 
 
+def copy_from_existing_dir(
+    existing_dir_map: dict[str, Path],
+    existing_keys: set[str],
+    dry_run: bool,
+) -> int:
+    """Copy relevant files from EXISTING_DOWNLOAD_DIR to DOWNLOAD_DIR with the
+    datetime prefix stripped.  Updates existing_keys in-place so the main loop
+    treats copied files as already present.  Returns the number of files copied."""
+    copied = 0
+    for ck, src in sorted(existing_dir_map.items()):
+        clean_name = _DATETIME_PREFIX_RE.sub("", src.name)
+        dest = DOWNLOAD_DIR / clean_name
+        if dest.exists():
+            # Already copied on a previous run
+            existing_keys.add(canonical_video_key(clean_name))
+            continue
+        if dry_run:
+            console.print(f"[info]Would copy:[/info] {clean_name}")
+            copied += 1
+            continue
+        try:
+            shutil.copy2(src, dest)
+            existing_keys.add(canonical_video_key(clean_name))
+            console.print(f"[info]Copied from legacy dir:[/info] {clean_name}")
+            copied += 1
+        except Exception as exc:
+            console.print(f"[error]Copy failed ({src.name}):[/error] {exc}")
+    return copied
+
+
 async def async_main(dry_run: bool, limit: int) -> None:
     ensure_directories()
-    existing_keys = load_existing_video_keys()
+    load_404_skip_keys()
+    existing_keys, existing_dir_map = load_existing_video_keys()
 
     console.print("=" * 70)
     console.print("[info]STEP 3: Download Low-Res Videos[/info]")
     console.print("=" * 70)
     console.print(f"Parallel downloads: {MAX_CONCURRENT_DOWNLOADS}")
     console.print(f"Existing normalized video keys: {len(existing_keys)}")
+    console.print(f"  (of which in legacy dir to copy: {len(existing_dir_map)})")
+    console.print(f"404 skip-list entries: {len(_404_skip_keys)}")
     console.print()
+
+    if existing_dir_map:
+        console.print(
+            f"[info]Copying {len(existing_dir_map)} file(s) from legacy dir to "
+            f"{DOWNLOAD_DIR}…[/info]"
+        )
+        n_copied = copy_from_existing_dir(existing_dir_map, existing_keys, dry_run)
+        console.print(f"[info]Done — {n_copied} file(s) copied.[/info]")
+        console.print()
 
     global _throttle_lock
     _throttle_lock = asyncio.Lock()
@@ -415,7 +507,7 @@ async def async_main(dry_run: bool, limit: int) -> None:
                 new_targets: list[dict] = []
                 for r in targets:
                     rk = _record_key(r)
-                    if rk in seen_keys:
+                    if rk in seen_keys or rk in _404_skip_keys:
                         continue
                     seen_keys.add(rk)
                     ck = canonical_video_key(str(r.get("filename", "")))
@@ -486,7 +578,7 @@ async def async_main(dry_run: bool, limit: int) -> None:
                     new_batch: list[dict] = []
                     for r in fresh:
                         rk = _record_key(r)
-                        if rk in seen_keys:
+                        if rk in seen_keys or rk in _404_skip_keys:
                             continue
                         seen_keys.add(rk)
                         ck = canonical_video_key(str(r.get("filename", "")))

@@ -29,9 +29,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import time
+import warnings
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,6 +59,20 @@ def _lf_patched_load(path_or_url, map_location=None, weights_only=None):
 _lf_cloud_io._load = _lf_patched_load
 
 import whisperx
+
+# Suppress noisy loggers
+logging.getLogger("whisperx.alignment").setLevel(logging.ERROR)
+logging.getLogger("whisperx.asr").setLevel(logging.WARNING)
+logging.getLogger("whisperx.vads.pyannote").setLevel(logging.WARNING)
+logging.getLogger("pytorch_lightning").setLevel(logging.WARNING)
+logging.getLogger("lightning_fabric").setLevel(logging.WARNING)
+
+# Suppress version-mismatch and deprecation warnings from pyannote / torchaudio
+warnings.filterwarnings("ignore", message=".*torchaudio.*deprecated.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*Model was trained with.*")
+warnings.filterwarnings("ignore", message=".*Lightning automatically upgraded.*")
+warnings.filterwarnings("ignore", message=".*Bad things might happen.*")
+warnings.filterwarnings("ignore", message=".*upgrade_checkpoint.*")
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -277,6 +293,9 @@ def transcribe_video(
     device: str = "cuda",
     min_speakers: int | None = None,
     max_speakers: int | None = None,
+    stream: bool = False,
+    video_num: int | None = None,
+    video_total: int | None = None,
 ) -> Path:
     """Run language detection + WhisperX transcription + alignment + diarization.
 
@@ -287,8 +306,9 @@ def transcribe_video(
     Returns the path to the saved transcript JSON.
     """
     t0 = time.time()
+    counter = f"[{video_num}/{video_total}] " if video_num is not None and video_total is not None else ""
     print(f"\n{'─' * 70}")
-    print(f"Transcribing: {video_path.name}")
+    print(f"{counter}Transcribing: {video_path.name}")
     print(f"  Path:      {video_path}")
     print(f"  Model:     {model_name}  Compute: {compute_type}  Device: {device}")
 
@@ -325,8 +345,45 @@ def transcribe_video(
     # language detection, which is unreliable (e.g. it can misdetect English
     # intros as Norwegian nn, Latin, etc.).  We've already confirmed English
     # via multi-segment detection above.
-    print("  Running whisper transcribe (language=en forced) …")
-    result = model.transcribe(audio, batch_size=batch_size, language="en")
+    if stream:
+        print("  Running whisper transcribe (language=en forced, streaming) …")
+        print("  " + "─" * 66)
+        sys.stdout.flush()
+        # Use the underlying faster-whisper generator so each segment is
+        # printed to the terminal as soon as it is decoded.
+        segments_gen, _ = model.model.transcribe(
+            audio,
+            language="en",
+            word_timestamps=True,
+            beam_size=5,
+            vad_filter=True,
+        )
+        raw_segments: list[dict] = []
+        for seg in segments_gen:
+            words = [
+                {
+                    "word": w.word,
+                    "start": w.start,
+                    "end": w.end,
+                    "score": w.probability,
+                }
+                for w in (seg.words or [])
+            ]
+            raw_segments.append({
+                "start": seg.start,
+                "end": seg.end,
+                "text": seg.text,
+                "words": words,
+            })
+            print(
+                f"  [{seg.start:7.1f}s → {seg.end:7.1f}s]  {seg.text.strip()}",
+                flush=True,
+            )
+        result = {"segments": raw_segments, "language": "en"}
+        print("  " + "─" * 66)
+    else:
+        print("  Running whisper transcribe (language=en forced, batched) …")
+        result = model.transcribe(audio, batch_size=batch_size, language="en")
     num_raw = len(result.get("segments", []))
     print(f"  Raw segments: {num_raw}")
 
@@ -454,6 +511,10 @@ def main() -> None:
         "--no-diarize", action="store_true",
         help="Skip diarization even if HF_TOKEN is set",
     )
+    parser.add_argument(
+        "--stream", action="store_true",
+        help="Stream transcription output segment-by-segment (slower but shows live progress)",
+    )
     args = parser.parse_args()
 
     ensure_directories()
@@ -476,6 +537,7 @@ def main() -> None:
     print(f"  Diarization:  {'yes \u2014 ' + args.diarize_model if hf_token else 'no (HF_TOKEN not set)'}")
     print(f"  Transcripts:  {TRANSCRIPTS_DIR}")
     print(f"  Non-English:  {NON_ENGLISH_JSONL}")
+    print(f"  Streaming:    {'yes' if args.stream else 'no (batched)'}")
 
     # Collect videos to process
     if args.file:
@@ -527,7 +589,6 @@ def main() -> None:
     while i < len(queue):
         video = queue[i]
         i += 1
-        print(f"\n[{i}/{len(queue)}]")
         try:
             out_path = transcribe_video(
                 video,
@@ -539,6 +600,9 @@ def main() -> None:
                 device=device,
                 min_speakers=args.min_speakers,
                 max_speakers=args.max_speakers,
+                stream=args.stream,
+                video_num=i,
+                video_total=len(queue),
             )
             # Log success
             append_jsonl(TRANSCRIPT_LOG_JSONL, {

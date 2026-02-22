@@ -18,6 +18,7 @@ IA_PROGRESS_FILE = DATA_DIR / "ia_identifiers_seen.txt"
 CLASSIFIED_JSONL = DATA_DIR / "classified_candidates.jsonl"
 DOWNLOAD_LOG_CSV = DATA_DIR / "download_log.csv"
 DOWNLOAD_FAILURES_JSONL = DATA_DIR / "download_failures.jsonl"
+DOWNLOAD_404_TXT = DATA_DIR / "download_404s.txt"  # persistent skip-list for HTTP 404s
 
 # Transcription outputs
 TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
