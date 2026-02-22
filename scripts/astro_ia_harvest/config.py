@@ -18,17 +18,21 @@ IA_PROGRESS_FILE = DATA_DIR / "ia_identifiers_seen.txt"
 CLASSIFIED_JSONL = DATA_DIR / "classified_candidates.jsonl"
 DOWNLOAD_LOG_CSV = DATA_DIR / "download_log.csv"
 DOWNLOAD_FAILURES_JSONL = DATA_DIR / "download_failures.jsonl"
-DOWNLOAD_404_TXT = DATA_DIR / "download_404s.txt"  # persistent skip-list for HTTP 404s
 
 # Transcription outputs
 TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
 TRANSCRIPT_LOG_JSONL = DATA_DIR / "transcript_log.jsonl"
 NON_ENGLISH_JSONL = DATA_DIR / "non_english_videos.jsonl"
+NO_AUDIO_JSONL = DATA_DIR / "no_audio_videos.jsonl"
 
 # Stage 5 outputs
 CLASSIFY_DIR = DATA_DIR / "classify"
 QA_DIR = DATA_DIR / "qa"
 QA_TEXT_DIR = DATA_DIR / "qa_text"
+QA_EMPTY_JSONL = DATA_DIR / "qa_empty.jsonl"  # transcripts that produced no Q&A pairs
+
+# Stage 6 outputs
+SEARCH_INDEX_DIR = DATA_DIR / "search_index"
 
 # Existing cache from the other project. Files found here will be treated as already downloaded.
 EXISTING_DOWNLOAD_DIR = Path(r"D:\ISSiRT_ia_videos_raw")
@@ -57,6 +61,7 @@ def ensure_directories() -> None:
     CLASSIFY_DIR.mkdir(parents=True, exist_ok=True)
     QA_DIR.mkdir(parents=True, exist_ok=True)
     QA_TEXT_DIR.mkdir(parents=True, exist_ok=True)
+    SEARCH_INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def env_or_default(name: str, default: str) -> str:

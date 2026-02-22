@@ -39,7 +39,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from astro_ia_harvest.config import (  # noqa: E402
     CLASSIFIED_JSONL,
     DOWNLOAD_DIR,
-    DOWNLOAD_404_TXT,
     DOWNLOAD_FAILURES_JSONL,
     DOWNLOAD_LOG_CSV,
     EXISTING_DOWNLOAD_DIR,
@@ -67,25 +66,26 @@ _recent_failures: list[float] = []   # timestamps of recent timeout/network fail
 _throttle_lock = None  # initialised to asyncio.Lock() inside async_main
 
 # Persistent skip-list: records that returned HTTP 404 on all URLs are never retried.
+# Keys are derived from download_failures.jsonl (records whose error contains "http_404").
 _404_skip_keys: set[str] = set()
 
 
 def load_404_skip_keys() -> None:
-    """Populate _404_skip_keys from the on-disk file (one key per line)."""
-    if DOWNLOAD_404_TXT.exists():
-        for line in DOWNLOAD_404_TXT.read_text(encoding="utf-8").splitlines():
+    """Populate _404_skip_keys from download_failures.jsonl (error contains 'http_404')."""
+    if DOWNLOAD_FAILURES_JSONL.exists():
+        for line in DOWNLOAD_FAILURES_JSONL.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if line:
-                _404_skip_keys.add(line)
-
-
-def save_404_key(key: str) -> None:
-    """Append a new key to the 404 skip-list file and the in-memory set."""
-    if key in _404_skip_keys:
-        return
-    _404_skip_keys.add(key)
-    with open(DOWNLOAD_404_TXT, "a", encoding="utf-8") as f:
-        f.write(key + "\n")
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if "http_404" in str(entry.get("error", "")):
+                ident = entry.get("identifier", "")
+                fname = entry.get("filename", "")
+                if ident or fname:
+                    _404_skip_keys.add(f"{ident}|{fname}")
 
 
 console = Console(
@@ -399,8 +399,9 @@ async def process_record(
         # Persist 404s so they are never retried in future runs
         if "http_404" in last_detail:
             rk = _record_key(rec)
-            save_404_key(rk)
-            console.print(f"{tag} [warning]Saved to 404 skip-list[/warning]")
+            if rk not in _404_skip_keys:
+                _404_skip_keys.add(rk)
+            console.print(f"{tag} [warning]Saved to 404 skip-list (via failures JSONL)[/warning]")
         return "failed"
 
 
@@ -444,11 +445,14 @@ async def async_main(dry_run: bool, limit: int) -> None:
     load_404_skip_keys()
     existing_keys, existing_dir_map = load_existing_video_keys()
 
+    actual_file_count = sum(1 for _ in DOWNLOAD_DIR.rglob("*.mp4")) if DOWNLOAD_DIR.exists() else 0
+
     console.print("=" * 70)
     console.print("[info]STEP 3: Download Low-Res Videos[/info]")
     console.print("=" * 70)
     console.print(f"Parallel downloads: {MAX_CONCURRENT_DOWNLOADS}")
-    console.print(f"Existing normalized video keys: {len(existing_keys)}")
+    console.print(f"Videos in download dir: {actual_file_count}")
+    console.print(f"Existing dedup keys (covers filename variants): {len(existing_keys)}")
     console.print(f"  (of which in legacy dir to copy: {len(existing_dir_map)})")
     console.print(f"404 skip-list entries: {len(_404_skip_keys)}")
     console.print()
@@ -489,6 +493,7 @@ async def async_main(dry_run: bool, limit: int) -> None:
 
     downloaded = 0
     skipped_existing = 0
+    skipped_prequeue = 0  # relevant records whose file already existed, never queued
     failed = 0
     total_processed = 0
     seen_keys: set[str] = set()  # tracks records already queued/processed
@@ -512,6 +517,7 @@ async def async_main(dry_run: bool, limit: int) -> None:
                     seen_keys.add(rk)
                     ck = canonical_video_key(str(r.get("filename", "")))
                     if ck in existing_keys or ck in queued_video_keys:
+                        skipped_prequeue += 1
                         continue
                     queued_video_keys.add(ck)
                     new_targets.append(r)
@@ -527,7 +533,8 @@ async def async_main(dry_run: bool, limit: int) -> None:
 
                 console.print(
                     f"[info]Queued {len(new_targets)} new record(s) "
-                    f"(total seen: {len(seen_keys)})[/info]"
+                    f"({skipped_prequeue} already have a file; "
+                    f"{len(seen_keys)} relevant JSONL records total)[/info]"
                 )
 
                 # Launch downloads for this batch — semaphore limits concurrency
@@ -583,6 +590,7 @@ async def async_main(dry_run: bool, limit: int) -> None:
                         seen_keys.add(rk)
                         ck = canonical_video_key(str(r.get("filename", "")))
                         if ck in existing_keys or ck in queued_video_keys:
+                            skipped_prequeue += 1
                             continue
                         queued_video_keys.add(ck)
                         new_batch.append(r)
@@ -591,7 +599,7 @@ async def async_main(dry_run: bool, limit: int) -> None:
                         new_batch = new_batch[:max(0, remaining)]
                     if new_batch:
                         console.print(
-                            f"[info]JSONL refresh: {len(new_batch)} new record(s) found[/info]"
+                            f"[info]JSONL refresh: {len(new_batch)} new record(s) queued[/info]"
                         )
                         for rec in new_batch:
                             task = asyncio.create_task(
@@ -617,10 +625,13 @@ async def async_main(dry_run: bool, limit: int) -> None:
 
     console.print()
     console.print("[info]Done[/info]")
-    console.print(f"Downloaded: {downloaded}")
-    console.print(f"Skipped existing: {skipped_existing}")
-    console.print(f"Failed: {failed}")
-    console.print(f"Output dir: {DOWNLOAD_DIR}")
+    console.print(f"Relevant JSONL records:  {len(seen_keys)}")
+    console.print(f"  Already had a file:    {skipped_prequeue}  (skipped before queuing — file existed)")
+    console.print(f"  Queued this run:       {total_processed}")
+    console.print(f"    Downloaded:          {downloaded}")
+    console.print(f"    Skipped (task saw existing file): {skipped_existing}")
+    console.print(f"    Failed:              {failed}")
+    console.print(f"Output dir: {DOWNLOAD_DIR}  ({actual_file_count} files before this run)")
 
 
 def main() -> None:

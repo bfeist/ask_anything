@@ -31,6 +31,7 @@ import argparse
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 import warnings
@@ -79,7 +80,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from astro_ia_harvest.config import (  # noqa: E402
     DOWNLOAD_DIR,
-    EXISTING_DOWNLOAD_DIR,
+    NO_AUDIO_JSONL,
     NON_ENGLISH_JSONL,
     TRANSCRIPTS_DIR,
     TRANSCRIPT_LOG_JSONL,
@@ -117,6 +118,14 @@ class NonEnglishError(Exception):
         )
 
 
+class NoAudioError(Exception):
+    """Raised when a video file has no audio stream."""
+
+    def __init__(self, video_path: Path):
+        self.video_path = video_path
+        super().__init__(f"No audio stream found in {video_path.name}")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -152,6 +161,36 @@ def load_non_english_set() -> set[str]:
     """Return set of video stems previously flagged as non-English."""
     records = load_jsonl(NON_ENGLISH_JSONL)
     return {r["video_stem"] for r in records if "video_stem" in r}
+
+
+def load_no_audio_set() -> set[str]:
+    """Return set of video stems previously flagged as having no audio stream."""
+    records = load_jsonl(NO_AUDIO_JSONL)
+    return {r["video_stem"] for r in records if "video_stem" in r}
+
+
+def probe_has_audio(video_path: Path) -> bool:
+    """Return True if the file has at least one audio stream, False otherwise.
+
+    Uses ffprobe to inspect the container without decoding any media.
+    Falls back to True on probe errors so transcription still attempts the file.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "a",
+                "-show_entries", "stream=index",
+                "-of", "csv=p=0",
+                str(video_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return bool(result.stdout.strip())
+    except Exception:
+        return True  # cannot probe — let whisperx try
 
 
 def detect_language_multi_sample(
@@ -311,6 +350,11 @@ def transcribe_video(
     print(f"{counter}Transcribing: {video_path.name}")
     print(f"  Path:      {video_path}")
     print(f"  Model:     {model_name}  Compute: {compute_type}  Device: {device}")
+
+    # 0. Pre-flight: verify audio stream exists before loading GPU resources
+    print("  Probing audio streams …")
+    if not probe_has_audio(video_path):
+        raise NoAudioError(video_path)
 
     # 1. Load audio
     print("  Loading audio …")
@@ -547,13 +591,17 @@ def main() -> None:
             sys.exit(1)
         videos = [target]
     else:
-        videos = find_videos(DOWNLOAD_DIR, EXISTING_DOWNLOAD_DIR)
+        videos = find_videos(DOWNLOAD_DIR)
 
     print(f"  Videos found: {len(videos)}")
 
     # Filter already-transcribed
     if not args.force:
+        before = len(videos)
         videos = [v for v in videos if not already_transcribed(v)]
+        skipped_transcribed = before - len(videos)
+        if skipped_transcribed:
+            print(f"  Skipped (already transcribed): {skipped_transcribed}")
 
     # Filter videos previously flagged as non-English
     if not args.force_lang_check:
@@ -565,6 +613,14 @@ def main() -> None:
             print(f"  Skipped (non-English): {skipped_lang}")
     else:
         non_english_stems = set()
+
+    # Filter videos previously flagged as having no audio
+    no_audio_stems = load_no_audio_set()
+    before = len(videos)
+    videos = [v for v in videos if v.stem not in no_audio_stems]
+    skipped_no_audio = before - len(videos)
+    if skipped_no_audio:
+        print(f"  Skipped (no audio stream): {skipped_no_audio}")
 
     if args.limit > 0:
         videos = videos[: args.limit]
@@ -581,8 +637,10 @@ def main() -> None:
     successes = 0
     failures = 0
     non_english_count = 0
+    no_audio_count = 0
     total_start = time.time()
     queue: list[Path] = list(videos)
+    initial_queue_size = len(queue)
     seen_videos: set[Path] = set(queue)  # track every path ever enqueued
 
     i = 0
@@ -602,7 +660,7 @@ def main() -> None:
                 max_speakers=args.max_speakers,
                 stream=args.stream,
                 video_num=i,
-                video_total=len(queue),
+                video_total=initial_queue_size,
             )
             # Log success
             append_jsonl(TRANSCRIPT_LOG_JSONL, {
@@ -627,8 +685,19 @@ def main() -> None:
                 "ts": int(time.time()),
             })
             non_english_count += 1
+        except NoAudioError as exc:
+            print(f"  \u2717 NO AUDIO: {exc}")
+            append_jsonl(NO_AUDIO_JSONL, {
+                "video_file": video.name,
+                "video_stem": video.stem,
+                "video_path": str(video),
+                "ts": int(time.time()),
+            })
+            no_audio_count += 1
         except Exception as exc:
-            print(f"  ✗ FAILED: {exc}")
+            # Truncate verbose errors (e.g. ffmpeg stderr dumps) to first line / 200 chars
+            err_msg = str(exc).split("\n")[0].strip()[:200]
+            print(f"  ✗ FAILED: {err_msg}")
             append_jsonl(TRANSCRIPT_LOG_JSONL, {
                 "video_file": video.name,
                 "video_path": str(video),
@@ -642,12 +711,13 @@ def main() -> None:
         if not args.file:
             transcribed = load_transcribed_set()
             non_english_stems = load_non_english_set()
-            for new_video in find_videos(DOWNLOAD_DIR, EXISTING_DOWNLOAD_DIR):
+            no_audio_stems = load_no_audio_set()
+            for new_video in find_videos(DOWNLOAD_DIR):
                 if new_video not in seen_videos and (
                     args.force or new_video.stem not in transcribed
                 ) and (
                     args.force_lang_check or new_video.stem not in non_english_stems
-                ):
+                ) and new_video.stem not in no_audio_stems:
                     print(f"  + Discovered new video: {new_video.name}")
                     queue.append(new_video)
                     seen_videos.add(new_video)
@@ -657,7 +727,7 @@ def main() -> None:
     total_time = time.time() - total_start
     print(f"\n{'=' * 70}")
     print(f"Transcription complete: {successes} ok, {non_english_count} non-English, "
-          f"{failures} failed in {total_time:.1f}s")
+          f"{no_audio_count} no-audio, {failures} failed in {total_time:.1f}s")
     print(f"{'=' * 70}")
 
 

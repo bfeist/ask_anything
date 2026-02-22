@@ -48,6 +48,7 @@ from astro_ia_harvest.config import (  # noqa: E402
     DEFAULT_OLLAMA_MODEL,
     DEFAULT_OLLAMA_URL,
     QA_DIR,
+    QA_EMPTY_JSONL,
     TRANSCRIPTS_DIR,
     ensure_directories,
     env_or_default,
@@ -59,6 +60,31 @@ from astro_ia_harvest.transcript_utils import (  # noqa: E402
     load_transcript,
     slice_segments,
 )
+
+# ---------------------------------------------------------------------------
+# Empty-result tracking
+# ---------------------------------------------------------------------------
+
+def _record_empty(
+    transcript_path: Path,
+    *,
+    event_type: str,
+    confidence: str,
+    model: str,
+    reason: str,
+) -> None:
+    """Append one line to qa_empty.jsonl for a transcript that yielded no Q&A."""
+    record = {
+        "transcript_file": transcript_path.name,
+        "event_type": event_type,
+        "event_type_confidence": confidence,
+        "model": model,
+        "reason": reason,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with QA_EMPTY_JSONL.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
 
 # ---------------------------------------------------------------------------
 # Event types and prompt routing
@@ -254,6 +280,40 @@ EXTRACT_PROMPTS = {
     "other": EXTRACT_PROMPT_GENERIC,
 }
 
+# Appended to the retry prompt when the first response contains null timestamps.
+_SCHEMA_REMINDER = (
+    "\n\nYOUR PREVIOUS RESPONSE CONTAINED null VALUES FOR TIMESTAMP FIELDS. "
+    "THIS IS NOT ALLOWED.\n"
+    "Every timestamp field MUST be a number (float). "
+    "If you are uncertain about a boundary, OMIT the entire pair rather than using null.\n"
+    "Required schema — no other fields, no null values:\n"
+    '  {"question_start": <float>, "question_end": <float>, '
+    '"answers": [{"answer_start": <float>, "answer_end": <float>}]}\n'
+    "Respond ONLY with a corrected JSON array. No markdown fencing, no commentary."
+)
+
+
+def _validate_qa_pairs(pairs: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split pairs into (valid, malformed).
+
+    A pair is malformed if any timestamp field is not a real number (e.g. None).
+    """
+    valid: list[dict] = []
+    malformed: list[dict] = []
+    for p in pairs:
+        qs = p.get("question_start")
+        qe = p.get("question_end")
+        if not isinstance(qs, (int, float)) or not isinstance(qe, (int, float)):
+            malformed.append(p)
+            continue
+        bad_answer = any(
+            not isinstance(a.get("answer_start"), (int, float))
+            or not isinstance(a.get("answer_end"), (int, float))
+            for a in p.get("answers", [])
+        )
+        (malformed if bad_answer else valid).append(p)
+    return valid, malformed
+
 
 # ---------------------------------------------------------------------------
 # Extraction engine
@@ -330,8 +390,31 @@ def run_extraction(
 
         result = extract_json(raw)
         if isinstance(result, list):
-            print(f"    -> {len(result)} pairs in {elapsed:.1f}s")
-            all_pairs.extend(result)
+            valid, malformed = _validate_qa_pairs(result)
+            if malformed:
+                print(f"    -> {len(malformed)} malformed pair(s) in chunk {ci} "
+                      f"(null timestamps) — retrying...")
+                retry_prompt = user_prompt + _SCHEMA_REMINDER
+                t0r = time.time()
+                raw2 = call_ollama(
+                    ollama_url, model, retry_prompt,
+                    system=system_prompt, temperature=temperature,
+                )
+                elapsed_r = time.time() - t0r
+                total_elapsed += elapsed_r
+                raw_parts.append(raw2)
+                result2 = extract_json(raw2)
+                if isinstance(result2, list):
+                    valid, still_bad = _validate_qa_pairs(result2)
+                    if still_bad:
+                        print(f"    -> retry: {len(still_bad)} still malformed "
+                              f"— dropping them")
+                    print(f"    -> retry: {len(valid)} valid pairs in {elapsed_r:.1f}s")
+                else:
+                    print(f"    -> retry failed to parse ({elapsed_r:.1f}s): {raw2[:200]}")
+            else:
+                print(f"    -> {len(valid)} pairs in {elapsed:.1f}s")
+            all_pairs.extend(valid)
         else:
             print(f"    -> FAILED to parse chunk {ci} ({elapsed:.1f}s): {raw[:200]}")
 
@@ -383,17 +466,17 @@ def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
     # Step 3: merge entries with overlapping/nearby question timestamps
     MERGE_THRESHOLD = 15.0  # seconds
     merged: list[dict] = []
-    for p in sorted(pairs, key=lambda x: x.get("question_start", 0)):
-        qs = p.get("question_start", 0)
-        qe = p.get("question_end", 0)
+    for p in sorted(pairs, key=lambda x: x.get("question_start") or 0):
+        qs = p.get("question_start") or 0
+        qe = p.get("question_end") or 0
         matched = False
         for m in merged:
-            mqs = m.get("question_start", 0)
-            mqe = m.get("question_end", 0)
+            mqs = m.get("question_start") or 0
+            mqe = m.get("question_end") or 0
             if abs(qs - mqs) <= MERGE_THRESHOLD or (mqs <= qs <= mqe):
                 # Merge: extend question window and add answers
-                m["question_start"] = min(m["question_start"], p.get("question_start", 0))
-                m["question_end"] = max(m["question_end"], p.get("question_end", 0))
+                m["question_start"] = min(m.get("question_start") or 0, p.get("question_start") or 0)
+                m["question_end"] = max(m.get("question_end") or 0, p.get("question_end") or 0)
                 # Append answers, avoiding duplicates (within 5 s)
                 existing_starts = {a.get("answer_start") for a in m["answers"]}
                 for a in p.get("answers", []):
@@ -409,9 +492,9 @@ def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
 
     # Step 4: sort chronologically and sort each answers list by answer_start
     for m in merged:
-        m["answers"] = sorted(m["answers"], key=lambda a: a.get("answer_start", 0))
+        m["answers"] = sorted(m["answers"], key=lambda a: a.get("answer_start") or 0)
 
-    sorted_pairs = sorted(merged, key=lambda x: x.get("question_start", 0))
+    sorted_pairs = sorted(merged, key=lambda x: x.get("question_start") or 0)
 
     # Step 5: absorb chunk-overlap artifacts — entries whose question
     # window overlaps with a prior entry's question window (same question
@@ -425,12 +508,12 @@ def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
     for p in sorted_pairs:
         if cleaned:
             prev = cleaned[-1]
-            prev_qe = prev.get("question_end", 0)
+            prev_qe = prev.get("question_end") or 0
             prev_answer_end = max(
-                (a.get("answer_end", 0) for a in prev.get("answers", [])), default=0
+                (a.get("answer_end") or 0 for a in prev.get("answers", [])), default=0
             )
-            qs = p.get("question_start", 0)
-            qe = p.get("question_end", 0)
+            qs = p.get("question_start") or 0
+            qe = p.get("question_end") or 0
 
             # Only merge if the NEW question starts BEFORE the previous
             # question ends (genuine duplicate) — not merely before the
@@ -439,7 +522,7 @@ def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
 
             if is_dup_question:
                 # Merge: extend question window, fold in new answers
-                prev["question_end"] = max(prev_qe, qe)
+                prev["question_end"] = max(prev_qe or 0, qe or 0)
                 existing_starts = {a.get("answer_start") for a in prev["answers"]}
                 for a in p.get("answers", []):
                     a_start = a.get("answer_start", 0)
@@ -447,7 +530,7 @@ def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
                         prev["answers"].append(a)
                         existing_starts.add(a_start)
                 prev["answers"] = sorted(
-                    prev["answers"], key=lambda a: a.get("answer_start", 0)
+                    prev["answers"], key=lambda a: a.get("answer_start") or 0
                 )
                 continue
         cleaned.append(p)
@@ -458,14 +541,14 @@ def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
     # entirely contained within the question with no extension beyond.
     valid: list[dict] = []
     for p in cleaned:
-        qs = p.get("question_start", 0)
-        qe = p.get("question_end", 0)
+        qs = p.get("question_start") or 0
+        qe = p.get("question_end") or 0
         answers = p.get("answers", [])
 
         good_answers = []
         for a in answers:
-            a_start = a.get("answer_start", 0)
-            a_end = a.get("answer_end", 0)
+            a_start = a.get("answer_start") or 0
+            a_end = a.get("answer_end") or 0
 
             # If answer starts before question ends but extends beyond,
             # fix the start to be at question_end
@@ -491,16 +574,17 @@ def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
     # that start after the next question begins; trim answers that merely
     # extend past the next question start.
     for i in range(len(valid) - 1):
-        next_qs = valid[i + 1].get("question_start", 0)
+        next_qs = valid[i + 1].get("question_start") or 0
         trimmed = []
         for a in valid[i].get("answers", []):
-            a_start = a.get("answer_start", 0)
-            a_end = a.get("answer_end", 0)
+            a_start = a.get("answer_start") or 0
+            a_end = a.get("answer_end") or 0
             if a_start >= next_qs:
                 continue  # answer belongs to the next exchange
             if a_end > next_qs:
                 a["answer_end"] = next_qs  # trim overlap
-            if a["answer_end"] - a.get("answer_start", 0) > 2.0:
+                a_end = next_qs
+            if a_end - a_start > 2.0:
                 trimmed.append(a)
         valid[i]["answers"] = trimmed
 
@@ -637,6 +721,14 @@ def process_transcript(
     # Extraction
     if not segments:
         print(f"  Skipping Q&A extraction — transcript has no segments.")
+        _record_empty(
+            transcript_path,
+            event_type=event_type,
+            confidence=confidence,
+            model=model,
+            reason="empty_transcript",
+        )
+        print(f"  Logged to {QA_EMPTY_JSONL.name}")
         output = {
             "transcript_file": transcript_path.name,
             "model": model,
@@ -678,10 +770,28 @@ def process_transcript(
         print("\nFAILED to parse JSON from response.")
         print("Raw response (first 1000 chars):")
         print(raw[:1000])
+        _record_empty(
+            transcript_path,
+            event_type=event_type,
+            confidence=confidence,
+            model=model,
+            reason="extraction_failed",
+        )
         return False
 
-    # Summary
-    print(f"\n  {len(qa_pairs)} Q&A pairs found in {elapsed:.1f}s")
+    # Track empty results before summarising
+    if not qa_pairs:
+        print(f"\n  0 Q&A pairs found in {elapsed:.1f}s")
+        _record_empty(
+            transcript_path,
+            event_type=event_type,
+            confidence=confidence,
+            model=model,
+            reason="no_qa_found",
+        )
+    else:
+        # Summary
+        print(f"\n  {len(qa_pairs)} Q&A pairs found in {elapsed:.1f}s")
     for i, qa in enumerate(qa_pairs, 1):
         answers = qa.get("answers", [])
         qs = qa.get("question_start", "?")
