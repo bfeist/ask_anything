@@ -62,6 +62,7 @@ EVENT_TYPES = (
     "media_interview",
     "panel",
     "produced_content",
+    "produced_interview",
     "other",
 )
 
@@ -79,8 +80,11 @@ should be treated as near-definitive evidence of the event type:
 - "Inflight_KTTV", "Inflight_KDVR", "Inflight_[TV station]", \
 "Discusses_Life_In_Space_With", "Talks_with", "Answers_Media_Questions", \
 "Interviews_with" → media_interview
+- "Interview_Reel", "CCP_Interview", "Quick_Questions", \
+"discusses_his_background", "discusses_launch_day", "discusses_the", \
+"discusses_training" → produced_interview
 - "Explainer", "What_Human_Health", "Connecting_Classrooms_to_Space" (without \
-live Q&A), montage, overview with no Q&A portion → produced_content
+live Q&A), montage, overview with no Q&A portion, PSA → produced_content
 
 Classify as exactly ONE of:
 - "student_qa": A school downlink / ARISS contact where students ask an astronaut \
@@ -100,24 +104,36 @@ astronaut answering. Often called "inflight" events (e.g. "Inflight KTTV-TV" or 
 "Discusses Life in Space with [outlet]"). Usually 2-4 speakers total.
 - "panel": A panel discussion or roundtable with roughly equal speaking time among \
 participants. Less structured Q&A with multiple expert speakers.
-- "produced_content": A pre-recorded, edited, or narrated video with NO live Q&A. \
-Examples: mission overview montages, explainer videos, educational segments, \
-narrated documentaries. Characterized by: 1-2 speakers total, scripted/rehearsed \
-tone, no back-and-forth question-answer pattern, very short segments that sound \
-like sound bites rather than conversation. If only 1 speaker talks for nearly the \
-entire video, it is likely produced content.
+- "produced_interview": A pre-produced interview where the astronaut answers \
+off-camera questions but the INTERVIEWER'S AUDIO HAS BEEN EDITED OUT. Only the \
+astronaut is heard. Characterized by: exactly 1 speaker for the entire video, \
+clear topic transitions (the astronaut shifts subjects as if responding to a new \
+question), often 5-20 minutes long. Common filename patterns: "Interview_Reel", \
+"CCP_Interview", "discusses_his_background", "Quick_Questions". The astronaut \
+is clearly answering questions but you cannot hear the interviewer.
+- "produced_content": A pre-recorded, edited, or narrated video with NO Q&A at \
+all — not even implied questions. Examples: mission overview montages, explainer \
+videos, PSAs, narrated documentaries, ham radio knowledge episodes. Characterized \
+by: scripted monologue, no topic transitions that suggest questions, promotional \
+or educational narration style.
 - "other": Anything that doesn't fit the above (ceremony, lecture, etc).
 
 IMPORTANT RULES:
-1. If a video has ONLY 1-2 speakers and one speaker dominates >90% of talk time \
-with no clear questions being asked by others, classify as "produced_content".
-2. If the transcript shows a conversational back-and-forth between a TV host and \
+1. If a video has ONLY 1 speaker and the filename contains "Interview_Reel", \
+"CCP_Interview", "Quick_Questions", or "discusses", classify as "produced_interview". \
+These are interviews with the questioner's audio edited out.
+2. If a video has ONLY 1-2 speakers and one speaker dominates >90% of talk time \
+but the transcript shows clear topic transitions (the speaker shifts subjects as if \
+responding to new questions), classify as "produced_interview" — NOT "produced_content".
+3. Only classify as "produced_content" if there is NO evidence of Q&A pattern at \
+all — the content is purely scripted narration, a montage, PSA, or explainer.
+4. If the transcript shows a conversational back-and-forth between a TV host and \
 an astronaut, classify as "media_interview" even if speaker count is >=3 (audio \
 bleed from broadcast can create extra speaker labels).
-3. A video named "News Conference" or "Post-flight" is very likely "press_conference".
-4. When uncertain between "other" and a more specific type, prefer the specific type \
+5. A video named "News Conference" or "Post-flight" is very likely "press_conference".
+6. When uncertain between "other" and a more specific type, prefer the specific type \
 if there is any Q&A pattern visible.
-5. Very short videos (under 3 minutes) with only sound bites and no Q&A exchange \
+7. Very short videos (under 3 minutes) with only sound bites and no Q&A exchange \
 pattern are almost always "produced_content" — they are promotional montages or \
 highlight reels.
 

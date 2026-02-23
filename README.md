@@ -1,34 +1,26 @@
-# Astronaut IA Interview Harvester
+# Ask an Astronaut Anything
 
-This project scans Internet Archive for NASA-related videos, classifies likely interview/Q&A content, and downloads only low-res versions for downstream transcription.
+A searchable database of questions and answers from NASA astronaut Q&A sessions and interviews. Ask a question in natural language, find the closest real question asked by a student or journalist, and jump straight to that moment in the video.
 
-## What This Solves
+The frontend runs entirely client-side — no server required after the search index is built.
 
-- Collects large amounts of interview-style astronaut footage.
-- Filters out likely non-dialogue assets (for example passive camera feeds).
-- Avoids redownloading files already present in the download location.
-- Keeps each step incremental and resumable.
+## How It Works
 
-## Pipeline
+**Data pipeline** (Python, `scripts/`):
 
-1. `scripts/1_scan_ia_metadata.py`
-- IA search and metadata collection.
-- Output: `data/ia_video_metadata.jsonl`
+1. `1_scan_ia_metadata.py` — search Internet Archive for NASA JSC PAO videos; write `data/ia_video_metadata.jsonl`
+2. `2_classify_candidates.py` — use a local LLM (Ollama) to filter out non-dialogue footage; write `data/classified_candidates.jsonl`
+3. `3_download_lowres.py` — download low-res versions of relevant videos
+4. `4_transcribe_videos.py` — transcribe with WhisperX (large-v3 + forced alignment + optional speaker diarization); write `data/transcripts/`
+5. `5a_classify_event.py` — classify each transcript as `student_qa`, `press_conference`, `panel`, or `other`
+6. `5b_extract_qa.py` — use LLM to extract Q&A time boundaries; write `data/qa/`
+7. `5c_build_qa_text.py` — reconstruct verbatim Q&A text from transcript slices; write `data/qa_text/`
+8. `6_build_search_index.py` — embed all questions with `all-MiniLM-L6-v2` and write a static binary index to `data/search_index/`
 
-2. `scripts/2_classify_candidates.py`
-- Ollama-based interview/Q&A relevance classification.
-- Output: `data/classified_candidates.jsonl`
+**Web frontend** (React + Vite, `src/`):
 
-3. `scripts/3_download_lowres.py`
-- Downloads low-res candidates first (`.ia.mp4` preferred).
-- Outputs:
-	- `downloads/*.mp4`
-	- `data/download_log.csv`
-	- `data/download_failures.jsonl`
-
-Orchestrator:
-
-- `scripts/run_pipeline.py`
+- Loads the static index and runs semantic search in-browser via `transformers.js`
+- Displays matching questions and plays the answer segment in the source video
 
 ## Quick Start
 
@@ -36,29 +28,44 @@ Orchestrator:
 uv sync
 ```
 
-Run full pipeline:
+Run the harvest pipeline (steps 1–3):
 
 ```bash
 uv run python scripts/run_pipeline.py --steps 1 2 3 --model gemma3:12b
 ```
 
-Short iterative validation run (recommended first):
+Transcribe downloaded videos (step 4):
 
 ```bash
-uv run python scripts/1_scan_ia_metadata.py --max-queries 1 --max-pages 1 --max-items 3
-uv run python scripts/2_classify_candidates.py --limit 10
-uv run python scripts/3_download_lowres.py --limit 5 --dry-run
-uv run python scripts/run_pipeline.py --steps 1 2 3 --step1-max-queries 1 --step1-max-pages 1 --step1-max-items 2 --step2-limit 5 --step3-limit 3 --step3-dry-run
+uv run python scripts/4_transcribe_videos.py
 ```
 
-Run only classification with a different model:
+Extract Q&A and build the search index (steps 5–6):
 
 ```bash
-uv run python scripts/2_classify_candidates.py --model gemma3:12b
+uv run python scripts/5a_classify_event.py
+uv run python scripts/5b_extract_qa.py
+uv run python scripts/5c_build_qa_text.py
+uv run python scripts/6_build_search_index.py
 ```
+
+Start the frontend:
+
+```bash
+npm install
+npm run dev
+```
+
+## Requirements
+
+- Python 3.11+, `uv`
+- [Ollama](https://ollama.com) running locally (for steps 2, 5a, 5b)
+- CUDA GPU recommended for steps 4-6 (WhisperX transcription, gemma3:12b question detection, and embedding generation)
+- `HF_TOKEN` env var for speaker diarization (optional)
 
 ## Documentation
 
-- `docs/architecture.md`
-- `docs/classification_strategy.md`
-- `docs/operations.md`
+- [docs/architecture.md](docs/architecture.md)
+- [docs/classification_strategy.md](docs/classification_strategy.md)
+- [docs/operations.md](docs/operations.md)
+- [docs/vision.md](docs/vision.md)
