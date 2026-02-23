@@ -185,8 +185,6 @@ def process_qa_file(qa_path: Path, *, force: bool = False) -> bool:
     #    question.  This typically means the "questioner" is just continuing
     #    to talk and there is no real answer.
     # 2. Drop pairs with empty question text (diarization/transcript gap).
-    #    Exception: produced_interview pairs have zero-width questions by
-    #    design (interviewer audio was edited out), so we keep those.
     # 3. Drop pairs with zero answers.
     event_type = qa_data.get("event_type", "unknown")
     pre_count = len(built_pairs)
@@ -196,8 +194,8 @@ def process_qa_file(qa_path: Path, *, force: bool = False) -> bool:
         q_text = p["question"].get("text", "").strip()
         answers = p.get("answers", [])
 
-        # Drop empty questions (but keep produced_interview topic segments)
-        if not q_text and event_type != "produced_interview":
+        # Drop empty questions
+        if not q_text:
             continue
 
         # Drop answerless pairs

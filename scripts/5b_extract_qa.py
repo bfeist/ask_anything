@@ -96,7 +96,6 @@ EVENT_TYPES = (
     "media_interview",
     "panel",
     "produced_content",
-    "produced_interview",
     "other",
 )
 
@@ -105,7 +104,6 @@ SKIP_EXTRACTION_TYPES = {"produced_content"}
 
 # For student Q&A, plain transcript works better (proven).
 # For press conferences and media interviews, diarized labels help.
-# For produced interviews, plain works (single speaker).
 USE_DIARIZATION_FOR = {"press_conference", "media_interview", "panel"}
 
 # ---------------------------------------------------------------------------
@@ -241,45 +239,6 @@ A typical media interview has 5-15 questions.
 Respond ONLY with a JSON array of objects. No markdown fencing, no commentary.\
 """
 
-EXTRACT_PROMPT_PRODUCED_INTERVIEW = """\
-You are a precise transcript analyst. This is a pre-produced interview where an \
-astronaut answers questions from an off-camera interviewer whose audio has been \
-EDITED OUT. Only the astronaut's responses are audible — there is only ONE speaker.
-
-Your job is to identify the TOPIC SEGMENTS: distinct answer blocks where the \
-astronaut shifts to responding to a new (unheard) question.
-
-The transcript has timestamps in seconds. The PRIMARY and MOST RELIABLE signal \
-for topic boundaries is GAPS in the timestamps — pauses of 5+ seconds where the \
-off-camera interviewer asked their next question. Focus on these gaps above all else.
-
-HOW TO IDENTIFY SEGMENTS:
-1. Look at the timestamps. Find every gap of 5+ seconds between consecutive \
-transcript segments. Each gap corresponds to a new question being asked.
-2. Everything between two gaps is ONE answer/segment.
-3. The astronaut's first words mark the start of the first segment.
-4. The astronaut's last words mark the end of the last segment.
-
-For each topic segment, output:
-- answer_start: timestamp (seconds) where the astronaut begins this answer
-- answer_end: timestamp (seconds) where the astronaut finishes this answer
-
-CRITICAL RULES:
-1. ONLY split at timestamp gaps >= 5 seconds. Do NOT split within continuous speech.
-2. If the astronaut talks for 2 minutes without a 5-second gap, that is ONE segment.
-3. The number of segments should roughly equal the number of large gaps + 1.
-4. Output items in CHRONOLOGICAL ORDER by answer_start.
-
-Respond ONLY with a JSON array of objects. No markdown fencing, no commentary.
-
-Example output format:
-[
-  {{"answer_start": 3.0, "answer_end": 45.2}},
-  {{"answer_start": 49.8, "answer_end": 97.5}},
-  ...
-]\
-"""
-
 EXTRACT_PROMPT_GENERIC = """\
 You are a precise transcript analyst. Your job is to identify the time boundaries of \
 ALL question-and-answer exchanges in a NASA event transcript.
@@ -317,7 +276,6 @@ EXTRACT_PROMPTS = {
     "student_qa": EXTRACT_PROMPT_STUDENT_QA,
     "press_conference": EXTRACT_PROMPT_PRESS_CONFERENCE,
     "media_interview": EXTRACT_PROMPT_MEDIA_INTERVIEW,
-    "produced_interview": EXTRACT_PROMPT_PRODUCED_INTERVIEW,
     "panel": EXTRACT_PROMPT_GENERIC,
     "other": EXTRACT_PROMPT_GENERIC,
 }
@@ -355,104 +313,6 @@ def _validate_qa_pairs(pairs: list[dict]) -> tuple[list[dict], list[dict]]:
         )
         (malformed if bad_answer else valid).append(p)
     return valid, malformed
-
-
-def _validate_produced_interview_pairs(
-    pairs: list[dict],
-) -> tuple[list[dict], list[dict]]:
-    """Validate produced_interview format: {answer_start, answer_end}.
-
-    Returns (valid, malformed).
-    """
-    valid: list[dict] = []
-    malformed: list[dict] = []
-    for p in pairs:
-        a_start = p.get("answer_start")
-        a_end = p.get("answer_end")
-        if (
-            not isinstance(a_start, (int, float))
-            or not isinstance(a_end, (int, float))
-        ):
-            malformed.append(p)
-            continue
-        valid.append(p)
-    return valid, malformed
-
-
-def _convert_produced_interview_pairs(pairs: list[dict]) -> list[dict]:
-    """Convert produced_interview LLM output to standard qa_pairs format.
-
-    Input:  [{answer_start, answer_end}, ...]
-    Output: [{question_start, question_end, answers: [...]}, ...]
-
-    Since the interviewer's audio was edited out, question_start == question_end
-    (zero-width marker at the beginning of the answer).
-    """
-    qa_pairs = []
-    for p in pairs:
-        a_start = p["answer_start"]
-        a_end = p["answer_end"]
-        qa_pairs.append({
-            "question_start": a_start,
-            "question_end": a_start,  # zero-width: no audible question
-            "answers": [{"answer_start": a_start, "answer_end": a_end}],
-        })
-    return qa_pairs
-
-
-# ---------------------------------------------------------------------------
-# Gap-based segmentation for produced interviews
-# ---------------------------------------------------------------------------
-
-_GAP_THRESHOLD = 3.0  # seconds — gaps >= this indicate a new question
-
-
-def _segment_by_gaps(
-    segments: list[dict],
-    gap_threshold: float = _GAP_THRESHOLD,
-) -> list[dict]:
-    """Split transcript segments into topic blocks at timestamp gaps.
-
-    For produced interviews where the interviewer's audio is edited out,
-    large gaps (>= *gap_threshold* seconds) between consecutive transcript
-    segments indicate points where a new question was asked.
-
-    Returns standard qa_pairs format with zero-width question markers.
-    """
-    if not segments:
-        return []
-
-    # Sort segments by start time
-    sorted_segs = sorted(segments, key=lambda s: s.get("start", 0))
-
-    # Find gap positions
-    block_start = sorted_segs[0]["start"]
-    qa_pairs: list[dict] = []
-
-    for i in range(1, len(sorted_segs)):
-        prev_end = sorted_segs[i - 1].get("end", sorted_segs[i - 1]["start"])
-        curr_start = sorted_segs[i]["start"]
-        gap = curr_start - prev_end
-
-        if gap >= gap_threshold:
-            # End the current block and start a new one
-            block_end = prev_end
-            qa_pairs.append({
-                "question_start": block_start,
-                "question_end": block_start,  # zero-width
-                "answers": [{"answer_start": block_start, "answer_end": block_end}],
-            })
-            block_start = curr_start
-
-    # Final block
-    block_end = sorted_segs[-1].get("end", sorted_segs[-1]["start"])
-    qa_pairs.append({
-        "question_start": block_start,
-        "question_end": block_start,
-        "answers": [{"answer_start": block_start, "answer_end": block_end}],
-    })
-
-    return qa_pairs
 
 
 # ---------------------------------------------------------------------------
@@ -530,10 +390,7 @@ def run_extraction(
 
         result = extract_json(raw)
         if isinstance(result, list):
-            if event_type == "produced_interview":
-                valid, malformed = _validate_produced_interview_pairs(result)
-            else:
-                valid, malformed = _validate_qa_pairs(result)
+            valid, malformed = _validate_qa_pairs(result)
             if malformed:
                 print(f"    -> {len(malformed)} malformed pair(s) in chunk {ci} "
                       f"(null timestamps) — retrying...")
@@ -548,10 +405,7 @@ def run_extraction(
                 raw_parts.append(raw2)
                 result2 = extract_json(raw2)
                 if isinstance(result2, list):
-                    if event_type == "produced_interview":
-                        valid, still_bad = _validate_produced_interview_pairs(result2)
-                    else:
-                        valid, still_bad = _validate_qa_pairs(result2)
+                    valid, still_bad = _validate_qa_pairs(result2)
                     if still_bad:
                         print(f"    -> retry: {len(still_bad)} still malformed "
                               f"— dropping them")
@@ -569,11 +423,7 @@ def run_extraction(
     if not all_pairs:
         return None, total_elapsed, "\n---\n".join(raw_parts)
 
-    # Convert produced_interview format to standard qa_pairs before normalization
-    if event_type == "produced_interview":
-        all_pairs = _convert_produced_interview_pairs(all_pairs)
-
-    qa_pairs = normalize_qa_pairs(all_pairs, skip_merge=(event_type == "produced_interview"))
+    qa_pairs = normalize_qa_pairs(all_pairs)
     return qa_pairs, total_elapsed, "\n---\n".join(raw_parts)
 
 
@@ -589,14 +439,13 @@ def _strip_name_fields(pair: dict) -> None:
         ans.pop("answerer_name", None)
 
 
-def normalize_qa_pairs(pairs: list[dict], *, skip_merge: bool = False) -> list[dict]:
+def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
     """Normalize, merge, and sort Q&A pairs.
 
     1. Convert legacy flat format (answer_start, answer_end at top level)
        to the ``answers`` array format.
     2. Strip any name / affiliation fields.
     3. Merge entries that share overlapping question timestamps (within 15 s).
-       Skipped when *skip_merge* is True (e.g. produced_interview segments).
     4. Sort by question_start for chronological order.
     """
     # Step 1: ensure every entry has an "answers" list
@@ -615,34 +464,31 @@ def normalize_qa_pairs(pairs: list[dict], *, skip_merge: bool = False) -> list[d
         _strip_name_fields(p)
 
     # Step 3: merge entries with overlapping/nearby question timestamps
-    if skip_merge:
-        merged = list(sorted(pairs, key=lambda x: x.get("question_start") or 0))
-    else:
-        MERGE_THRESHOLD = 15.0  # seconds
-        merged = []
-        for p in sorted(pairs, key=lambda x: x.get("question_start") or 0):
-            qs = p.get("question_start") or 0
-            qe = p.get("question_end") or 0
-            matched = False
-            for m in merged:
-                mqs = m.get("question_start") or 0
-                mqe = m.get("question_end") or 0
-                if abs(qs - mqs) <= MERGE_THRESHOLD or (mqs <= qs <= mqe):
-                    # Merge: extend question window and add answers
-                    m["question_start"] = min(m.get("question_start") or 0, p.get("question_start") or 0)
-                    m["question_end"] = max(m.get("question_end") or 0, p.get("question_end") or 0)
-                    # Append answers, avoiding duplicates (within 5 s)
-                    existing_starts = {a.get("answer_start") for a in m["answers"]}
-                    for a in p.get("answers", []):
-                        a_start = a.get("answer_start", 0)
-                        if any(abs(a_start - es) < 5.0 for es in existing_starts if es is not None):
-                            continue
-                        m["answers"].append(a)
-                        existing_starts.add(a_start)
-                    matched = True
-                    break
-            if not matched:
-                merged.append(p)
+    MERGE_THRESHOLD = 15.0  # seconds
+    merged = []
+    for p in sorted(pairs, key=lambda x: x.get("question_start") or 0):
+        qs = p.get("question_start") or 0
+        qe = p.get("question_end") or 0
+        matched = False
+        for m in merged:
+            mqs = m.get("question_start") or 0
+            mqe = m.get("question_end") or 0
+            if abs(qs - mqs) <= MERGE_THRESHOLD or (mqs <= qs <= mqe):
+                # Merge: extend question window and add answers
+                m["question_start"] = min(m.get("question_start") or 0, p.get("question_start") or 0)
+                m["question_end"] = max(m.get("question_end") or 0, p.get("question_end") or 0)
+                # Append answers, avoiding duplicates (within 5 s)
+                existing_starts = {a.get("answer_start") for a in m["answers"]}
+                for a in p.get("answers", []):
+                    a_start = a.get("answer_start", 0)
+                    if any(abs(a_start - es) < 5.0 for es in existing_starts if es is not None):
+                        continue
+                    m["answers"].append(a)
+                    existing_starts.add(a_start)
+                matched = True
+                break
+        if not matched:
+            merged.append(p)
 
     # Step 4: sort chronologically and sort each answers list by answer_start
     for m in merged:
@@ -802,8 +648,8 @@ def print_qa_preview(qa_pairs: list[dict], segments: list[dict]) -> None:
         answers = qa.get("answers", [])
 
         if qs == qe:
-            # Produced interview: no audible question, show as topic segment
-            print(f"\n  Q{i}. [topic segment @ {qs:.1f}s]:")
+            # Zero-width question (e.g. diarization gap)
+            print(f"\n  Q{i}. [@ {qs:.1f}s]:")
         else:
             q_text = slice_segments(segments, qs, qe)[:150]
             print(f"\n  Q{i}. [{qs:.1f}s-{qe:.1f}s]:")
@@ -920,16 +766,9 @@ def process_transcript(
         print(f"  Saved (skipped): {out_path}")
         return True
 
-    if event_type == "produced_interview":
-        # Deterministic gap-based segmentation — no LLM needed
-        qa_pairs = _segment_by_gaps(segments)
-        elapsed = 0.0
-        raw = ""
-        print(f"\n  {len(qa_pairs)} topic segments detected (gap-based, threshold={_GAP_THRESHOLD}s)")
-    else:
-        qa_pairs, elapsed, raw = run_extraction(
-            segments, event_type, ollama_url, model, temperature=temperature,
-        )
+    qa_pairs, elapsed, raw = run_extraction(
+        segments, event_type, ollama_url, model, temperature=temperature,
+    )
 
     if qa_pairs is None:
         print("\nFAILED to parse JSON from response.")
@@ -1053,7 +892,7 @@ def main() -> None:
                 pending.append(t)
             else:
                 # Re-process if qa_pairs is empty (e.g. previously skipped
-                # produced_content that should now be produced_interview)
+                # type that was reclassified after re-running 5a)
                 try:
                     qa_data = json.loads(qa_path.read_text(encoding="utf-8"))
                     if not qa_data.get("qa_pairs"):

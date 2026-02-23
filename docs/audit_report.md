@@ -17,7 +17,7 @@ After iterative assessment and code changes, the pipeline produces **438 Q&A pai
 
 ### 1a. Classification System (5a_classify_event.py)
 
-- **Expanded event types** from 4 to 6: added `media_interview` and `produced_content`; later split `produced_content` into `produced_content` (no Q&A — montages, explainers) and `produced_interview` (interview reels where the interviewer's audio was edited out)
+- **Expanded event types** from 4 to 6: added `media_interview` and `produced_content`
 - **Added filename signal** to the LLM prompt (provides NASA naming conventions as context)
 - **Added video duration signal** (short videos ≤90s flagged as likely produced content)
 - **Rewrote system prompt** with detailed per-type classification rules and disambiguation guidance
@@ -26,8 +26,7 @@ After iterative assessment and code changes, the pipeline produces **438 Q&A pai
 ### 1b. QA Extraction (5b_extract_qa.py)
 
 - **New media_interview prompt** specifically designed for TV/radio interview format (host asks, astronaut answers)
-- **Produced content skip** — videos classified as `produced_content` are skipped entirely (no garbage pairs)
-- **Produced interview extraction** — videos classified as `produced_interview` (interview reels, CCP interviews, etc.) use deterministic gap-based segmentation: gaps >= 5 seconds between transcript segments mark topic boundaries where the off-camera interviewer asked a new question. No LLM needed — instant and accurate
+- **Produced content skip** — videos classified as `produced_content` are skipped entirely (no audible questions to extract)
 - **Overlap post-processing** (Step 6 in `normalize_qa_pairs`) — if `answer_start < question_end`, bumps answer start to question end; discards fully-contained overlaps
 - **Stricter generic prompt** — clearer instructions to avoid capturing opening statements
 
