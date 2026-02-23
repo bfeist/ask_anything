@@ -2,15 +2,24 @@ interface Props {
   messages: InitProgress[];
   indexReady: boolean;
   modelReady: boolean;
+  questionCount?: number;
 }
 
 /**
  * Shows loading progress while the search engine initialises.
  */
-export default function StatusBar({ messages, indexReady, modelReady }: Props): React.JSX.Element {
+export default function StatusBar({
+  messages,
+  indexReady,
+  modelReady,
+  questionCount,
+}: Props): React.JSX.Element {
   // Once everything is ready, show a minimal status
   if (indexReady && modelReady) {
-    return <div className="status-bar status-bar--ready">Ready — semantic search active</div>;
+    const countText = questionCount ? ` with ${questionCount.toLocaleString()} questions` : "";
+    return (
+      <div className="status-bar status-bar--ready">Ready — Semantic search active{countText}</div>
+    );
   }
 
   const latest = messages[messages.length - 1];

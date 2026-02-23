@@ -86,22 +86,25 @@ function App(): React.JSX.Element {
   return (
     <div className="app">
       <header className="app-header">
-        <h1 className="app-title">Ask Anything</h1>
-        <p className="app-subtitle">Semantic search across NASA astronaut Q&amp;A recordings</p>
+        <h1 className="app-title">Ask an Astronaut Anything</h1>
+        <p className="app-subtitle">
+          Search across astronaut Q&amp;A recordings onboard the International Space Station
+        </p>
       </header>
 
-      <StatusBar messages={statusMessages} indexReady={indexReady} modelReady={modelReady} />
+      <StatusBar
+        messages={statusMessages}
+        indexReady={indexReady}
+        modelReady={modelReady}
+        questionCount={getQuestionCount()}
+      />
 
       <main className="app-main">
         <div className="search-panel">
           <SearchInput
             onSearch={handleSearch}
             disabled={!engineReady}
-            placeholder={
-              engineReady
-                ? `Search ${getQuestionCount().toLocaleString()} questions…`
-                : "Loading search engine…"
-            }
+            placeholder="Ask your question"
           />
           <ResultsList
             results={results}
