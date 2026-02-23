@@ -40,7 +40,7 @@ jobs:
 
       - name: "📤 Deploy to DreamHost"
         env:
-          DREAMHOST_USER: ${{ vars.INTERSERVER_USER }}
+          INTERSERVER_USER: ${{ vars.INTERSERVER_USER }}
           INTERSERVER_HOST: ${{ vars.INTERSERVER_HOST }}
           INTERSERVER_PATH: ${{ vars.INTERSERVER_PATH }}
           SSHPASS: ${{ secrets.INTERSERVER_PASS }}
