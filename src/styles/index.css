@@ -12,14 +12,7 @@
   --text-muted: #666666;
   --radius: 0;
 
-  font-family:
-    "SF Mono",
-    "Fira Code",
-    "Fira Mono",
-    Menlo,
-    Consolas,
-    "DejaVu Sans Mono",
-    monospace;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
   line-height: 1.5;
   font-weight: 400;
   color: var(--fg);
@@ -430,4 +423,100 @@ body {
 .video-seek-btn:hover {
   background: var(--fg);
   color: var(--bg);
+}
+
+/* --------------------------------------------------------------------------
+   Video Questions List (in-video Q&A navigation)
+   -------------------------------------------------------------------------- */
+
+.video-questions {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.video-questions-header {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  background: var(--bg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.video-questions-list {
+  overflow-y: auto;
+  max-height: 260px;
+  border: 1px solid var(--border);
+}
+
+.vq-item {
+  display: flex;
+  gap: 12px;
+  padding: 10px 12px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  font-family: inherit;
+  font-size: 13px;
+  transition: background 0.1s;
+}
+
+.vq-item:last-child {
+  border-bottom: none;
+}
+
+.vq-item:hover {
+  background: var(--bg-muted);
+}
+
+.vq-rank {
+  flex: 0 0 24px;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding-top: 2px;
+}
+
+.vq-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.vq-text {
+  font-size: 13px;
+  line-height: 1.4;
+  margin-bottom: 2px;
+}
+
+.vq-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.vq-event {
+  text-transform: capitalize;
+}
+
+.vq-item-active {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.vq-item-active:hover {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.vq-item-active .vq-rank,
+.vq-item-active .vq-meta {
+  color: var(--border);
 }

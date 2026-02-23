@@ -229,6 +229,17 @@ export function getQuestionCount(): number {
   return _meta?.num_questions ?? 0;
 }
 
+/**
+ * Return all questions that belong to the same video (same `source_file`),
+ * sorted by `question_start` ascending.
+ */
+export function getQuestionsForVideo(sourceFile: string): IndexQuestion[] {
+  if (!_questions) return [];
+  return _questions
+    .filter((q) => q.source_file === sourceFile)
+    .sort((a, b) => (a.question_start ?? 0) - (b.question_start ?? 0));
+}
+
 // ---------------------------------------------------------------------------
 // IEEE 754 float16 → float32 conversion
 // ---------------------------------------------------------------------------

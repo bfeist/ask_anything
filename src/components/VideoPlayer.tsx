@@ -1,4 +1,7 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import VideoQuestionsList from "@/components/VideoQuestionsList";
+import { getQuestionsForVideo } from "@/lib/searchEngine";
+
 interface Props {
   result: SearchResult | null;
   onClose: () => void;
@@ -12,7 +15,8 @@ function formatTime(seconds: number): string {
 
 /**
  * Inner player component — receives a `key` so React unmounts/remounts
- * it when the selected result changes, which naturally resets all state.
+ * it when the video changes, which naturally resets all state.
+ * Supports intra-video question navigation without remounting.
  */
 function VideoPlayerInner({
   result,
@@ -26,6 +30,15 @@ function VideoPlayerInner({
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [activeQuestionId, setActiveQuestionId] = useState(result.question.id);
+
+  // All questions for this video, sorted by question_start.
+  const videoQuestions = useMemo(
+    () => getQuestionsForVideo(result.question.source_file),
+    [result.question.source_file]
+  );
+
+  const activeQuestion = videoQuestions.find((q) => q.id === activeQuestionId) ?? result.question;
 
   const seekTarget = result.question.question_start ?? 0;
 
@@ -47,10 +60,24 @@ function VideoPlayerInner({
   }, []);
 
   const handleTimeUpdate = useCallback(() => {
-    if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
+    const video = videoRef.current;
+    if (!video) return;
+    const t = video.currentTime;
+    setCurrentTime(t);
+
+    // Find the question whose window contains the current playback time.
+    // A question "owns" the time from its question_start up to the next
+    // question's question_start (or end of video).
+    let best: IndexQuestion | null = null;
+    for (const q of videoQuestions) {
+      if (q.question_start !== null && q.question_start <= t) {
+        best = q;
+      }
     }
-  }, []);
+    if (best !== null && best.id !== activeQuestionId) {
+      setActiveQuestionId(best.id);
+    }
+  }, [videoQuestions, activeQuestionId]);
 
   const handleDurationChange = useCallback(() => {
     if (videoRef.current) {
@@ -58,7 +85,15 @@ function VideoPlayerInner({
     }
   }, []);
 
-  const q = result.question;
+  const handleSeekToQuestion = useCallback((question: IndexQuestion) => {
+    const video = videoRef.current;
+    if (video && question.question_start !== null) {
+      video.currentTime = question.question_start;
+      video.play().catch(() => {});
+    }
+  }, []);
+
+  const q = activeQuestion;
   const hasAnswers = q.answers.length > 0;
   const firstAnswer = q.answers[0];
 
@@ -145,20 +180,22 @@ function VideoPlayerInner({
           <span className="video-info-label">Event type:</span>
           <span>{q.event_type.replace(/_/g, " ")}</span>
         </div>
-        <div className="video-info-row">
-          <span className="video-info-label">Score:</span>
-          <span>{(result.score * 100).toFixed(1)}% match</span>
-        </div>
       </div>
+
+      <VideoQuestionsList
+        sourceFile={result.question.source_file}
+        activeQuestionId={activeQuestionId}
+        onSeek={handleSeekToQuestion}
+      />
     </div>
   );
 }
 
 /**
- * Outer wrapper: uses `key` to force remount when the question changes,
- * which resets all internal state cleanly without useEffect + setState.
+ * Outer wrapper: uses `key` on the video URL to force remount only when the
+ * video file changes. Intra-video question navigation is handled internally.
  */
 export default function VideoPlayer({ result, onClose }: Props): React.JSX.Element | null {
   if (!result) return null;
-  return <VideoPlayerInner key={result.question.id} result={result} onClose={onClose} />;
+  return <VideoPlayerInner key={result.videoUrl} result={result} onClose={onClose} />;
 }
