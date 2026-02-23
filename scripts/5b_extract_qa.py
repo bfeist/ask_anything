@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Stage 5b: Extract Q&A time boundaries from a classified transcript.
 
-Reads the classification from <stem>.classify.json (produced by 5a) or
-classifies inline if not found.  Applies an event-type-specific LLM prompt
+Reads the classification from <stem>.classify.json (produced by 5a); skips
+the file if not found.  Applies an event-type-specific LLM prompt
 to extract Q&A time boundaries.
 
 The LLM returns only time boundaries — no names, no text.  Verbatim text is
@@ -102,9 +102,9 @@ EVENT_TYPES = (
 # Event types that should skip Q&A extraction entirely
 SKIP_EXTRACTION_TYPES = {"produced_content"}
 
-# For student Q&A, plain transcript works better (proven).
-# For press conferences and media interviews, diarized labels help.
-USE_DIARIZATION_FOR = {"press_conference", "media_interview", "panel"}
+# When diarization labels are available, use them for these event types.
+# Speaker labels help the model identify who is asking vs answering.
+USE_DIARIZATION_FOR = {"press_conference", "media_interview", "panel", "student_qa"}
 
 # ---------------------------------------------------------------------------
 # Extraction prompts  (timestamps-only — no names / affiliations)
@@ -112,25 +112,41 @@ USE_DIARIZATION_FOR = {"press_conference", "media_interview", "panel"}
 
 EXTRACT_PROMPT_STUDENT_QA = """\
 You are a precise transcript analyst. Your job is to identify the time boundaries of \
-ALL question-and-answer pairs from this school downlink / ARISS event where students \
-ask an astronaut questions from Earth.
+ALL question-and-answer pairs from this school downlink / education event where \
+students ask an astronaut questions.
 
-The transcript has timestamps in seconds. The pattern repeats: a student introduces \
-themselves and asks a question, then after a satellite delay (~6 seconds) the \
-astronaut gives a long answer. There are typically 15-20 questions — process the \
-ENTIRE transcript to the very end and do not stop early.
+The transcript has timestamps in seconds and may include speaker labels (SPEAKER_XX). \
+The typical pattern: a moderator or student introduces the question, the student asks \
+it, then the astronaut answers. There may be a satellite delay (~6 seconds) between \
+the question and the answer, or the event may be direct (no delay). There are \
+typically 10-20 questions — process the ENTIRE transcript to the very end and do not \
+stop early.
 
-Your task:
-1. Identify EVERY student QUESTION and the astronaut's ANSWER.
-2. Skip preamble, voice checks, Mission Control chatter, and closing remarks.
-3. Output items in CHRONOLOGICAL ORDER by question_start.
-4. For each pair output ONLY:
-   - question_start: timestamp (seconds) where student starts speaking
-   - question_end: timestamp where student finishes their question
+If speaker labels are present, use them to determine boundaries:
+- The moderator introduces students — this is NOT part of the question.
+- The student's question starts when the student speaker begins and ends when they \
+finish speaking.
+- The astronaut's answer starts when a DIFFERENT speaker (the astronaut) begins \
+responding and ends when that speaker finishes before the next question cycle.
+
+CRITICAL RULES:
+1. question_start is the timestamp where the STUDENT starts their actual question \
+(not the moderator's introduction).
+2. question_end is where the student finishes speaking.
+3. answer_start is where the astronaut begins responding.
+4. answer_end is where the astronaut finishes, before the next moderator introduction \
+or student question.
+5. Skip preamble, voice checks, Mission Control chatter, and closing remarks.
+6. Output items in CHRONOLOGICAL ORDER by question_start.
+
+For each pair output ONLY:
+   - question_start: timestamp (seconds, float) where student starts speaking
+   - question_end: timestamp (float) where student finishes their question
    - answers: An array with ONE object for the astronaut's answer:
-     [{"answer_start": <float>, "answer_end": <float>}]
+     [{{"answer_start": <float>, "answer_end": <float>}}]
 
 Do NOT include any text, names, or affiliations — ONLY timestamps.
+Every timestamp MUST be a number (float). Never use null.
 IMPORTANT: Process the ENTIRE transcript. Do NOT stop early.
 
 Respond ONLY with a JSON array of objects. No markdown fencing, no commentary.\
@@ -383,13 +399,21 @@ def run_extraction(
         raw = call_ollama(
             ollama_url, model, user_prompt,
             system=system_prompt, temperature=temperature,
+            num_predict=16384,
         )
         elapsed = time.time() - t0
         total_elapsed += elapsed
         raw_parts.append(raw)
 
         result = extract_json(raw)
+        _was_truncated = (
+            isinstance(result, list)
+            and not raw.rstrip().endswith("]")
+            and not raw.rstrip().endswith("```")
+        )
         if isinstance(result, list):
+            if _was_truncated:
+                print(f"    -> repaired truncated JSON (salvaged {len(result)} objects)")
             valid, malformed = _validate_qa_pairs(result)
             if malformed:
                 print(f"    -> {len(malformed)} malformed pair(s) in chunk {ci} "
@@ -399,6 +423,7 @@ def run_extraction(
                 raw2 = call_ollama(
                     ollama_url, model, retry_prompt,
                     system=system_prompt, temperature=temperature,
+                    num_predict=16384,
                 )
                 elapsed_r = time.time() - t0r
                 total_elapsed += elapsed_r
@@ -705,22 +730,8 @@ def process_transcript(
             event_type, confidence = cached
             print(f"  Event type: {event_type} (from .classify.json, {confidence})")
         else:
-            # Inline classification — import here to stay lightweight
-            import importlib.util
-            spec = importlib.util.spec_from_file_location(
-                "classify_mod",
-                Path(__file__).parent / "5a_classify_event.py",
-            )
-            classify_mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-            spec.loader.exec_module(classify_mod)  # type: ignore[union-attr]
-            classify_event = classify_mod.classify_event
-
-            print("  No .classify.json found — classifying inline...")
-            event_type, confidence = classify_event(
-                segments, ollama_url, model, temperature,
-                transcript_filename=transcript_path.name,
-            )
-            print(f"  Event type: {event_type} (confidence: {confidence})")
+            print("  No .classify.json found — skipping.")
+            return False
 
     # Extraction
     if not segments:
@@ -855,8 +866,11 @@ def main() -> None:
         help="Print a human-readable preview with text sliced from transcript.",
     )
     parser.add_argument(
-        "--force", action="store_true",
-        help="Re-extract even if a .qa.json already exists.",
+        "--force", nargs="?", const="all", default=None,
+        metavar="EVENT_TYPE",
+        help="Re-extract even if a .qa.json already exists. "
+             "Optionally specify an event type (e.g. --force student_qa) "
+             "to only re-extract that type. Use --force alone to redo all.",
     )
     args = parser.parse_args()
 
@@ -884,27 +898,52 @@ def main() -> None:
     print(f"  Transcripts found: {len(transcripts)}")
 
     # Filter already-processed unless --force
-    if not args.force:
-        pending = []
-        for t in transcripts:
-            qa_path = QA_DIR / (t.stem + ".qa.json")
-            if not qa_path.exists():
+    force_type = args.force  # None, "all", or an event type like "student_qa"
+    if force_type and force_type not in ("all", *EVENT_TYPES):
+        print(f"ERROR: Unknown event type for --force: {force_type}")
+        print(f"  Valid types: {', '.join(EVENT_TYPES)}")
+        sys.exit(1)
+
+    if force_type:
+        print(f"  Force mode: {'all types' if force_type == 'all' else force_type}")
+
+    pending = []
+    forced = 0
+    for t in transcripts:
+        qa_path = QA_DIR / (t.stem + ".qa.json")
+        if not qa_path.exists():
+            pending.append(t)
+            continue
+
+        # Existing .qa.json — decide whether to re-process
+        try:
+            qa_data = json.loads(qa_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pending.append(t)
+            continue
+
+        # Always re-process if qa_pairs is empty (e.g. previously skipped
+        # type that was reclassified after re-running 5a)
+        if not qa_data.get("qa_pairs"):
+            pending.append(t)
+            continue
+
+        # --force: re-process based on force scope
+        if force_type == "all":
+            pending.append(t)
+            forced += 1
+        elif force_type:
+            # Only force files whose classified event_type matches
+            existing_type = qa_data.get("event_type", "")
+            if existing_type == force_type:
                 pending.append(t)
-            else:
-                # Re-process if qa_pairs is empty (e.g. previously skipped
-                # type that was reclassified after re-running 5a)
-                try:
-                    qa_data = json.loads(qa_path.read_text(encoding="utf-8"))
-                    if not qa_data.get("qa_pairs"):
-                        pending.append(t)
-                except (json.JSONDecodeError, OSError):
-                    pending.append(t)
-    else:
-        pending = list(transcripts)
+                forced += 1
 
     skipped = len(transcripts) - len(pending)
     if skipped:
         print(f"  Already extracted: {skipped} (use --force to redo)")
+    if forced:
+        print(f"  Forced re-extraction: {forced}")
     print(f"  To process: {len(pending)}")
 
     if not pending:

@@ -40,7 +40,11 @@ def call_ollama(
 
 
 def extract_json(text: str) -> dict | list | None:
-    """Robustly extract a JSON object or array from LLM output."""
+    """Robustly extract a JSON object or array from LLM output.
+
+    Handles truncated JSON arrays (common when the LLM hits its token
+    limit) by finding the last complete object and closing the array.
+    """
     text = text.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
@@ -68,6 +72,65 @@ def extract_json(text: str) -> dict | list | None:
         except json.JSONDecodeError:
             pass
 
+    # Attempt to repair a truncated JSON array
+    repaired = _repair_truncated_json_array(text)
+    if repaired is not None:
+        return repaired
+
+    return None
+
+
+def _repair_truncated_json_array(text: str) -> list | None:
+    """Salvage complete objects from a truncated JSON array.
+
+    When the LLM output is cut off mid-array (e.g. ``[{...}, {... <EOF>``),
+    this finds the last complete top-level object and closes the array,
+    returning the successfully parsed list.  Returns *None* if repair fails.
+    """
+    # Find the opening bracket of the array
+    arr_start = text.find("[")
+    if arr_start == -1:
+        return None
+
+    inner = text[arr_start + 1:]
+
+    # Walk through and collect the last position after a complete top-level object
+    objects: list[dict] = []
+    depth = 0
+    obj_start: int | None = None
+    in_string = False
+    escape = False
+
+    for i, ch in enumerate(inner):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            if in_string:
+                escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+
+        if ch == "{":
+            if depth == 0:
+                obj_start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and obj_start is not None:
+                fragment = inner[obj_start:i + 1]
+                try:
+                    objects.append(json.loads(fragment))
+                except json.JSONDecodeError:
+                    pass
+                obj_start = None
+
+    if objects:
+        return objects
     return None
 
 
