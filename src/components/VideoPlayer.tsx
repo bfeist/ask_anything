@@ -89,6 +89,7 @@ function VideoPlayerInner({
             onTimeUpdate={handleTimeUpdate}
             onDurationChange={handleDurationChange}
             preload="auto"
+            autoPlay={true}
           >
             <track kind="captions" />
           </video>

@@ -9,9 +9,9 @@
 // ---------------------------------------------------------------------------
 // Paths (relative to dev server root — Vite middleware serves these)
 // ---------------------------------------------------------------------------
-const INDEX_META_URL = "/data/search_index/index_meta.json";
-const QUESTIONS_URL = "/data/search_index/questions.json";
-const EMBEDDINGS_URL = "/data/search_index/embeddings.bin";
+const INDEX_META_URL = "/static_assets/data/search_index/index_meta.json";
+const QUESTIONS_URL = "/static_assets/data/search_index/questions.json";
+const EMBEDDINGS_URL = "/static_assets/data/search_index/embeddings.bin";
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -100,7 +100,7 @@ export async function loadModel(onProgress?: (p: InitProgress) => void): Promise
   _modelPromise = (async () => {
     onProgress?.({
       stage: "model",
-      message: "Loading ML model (all-MiniLM-L6-v2)…",
+      message: "Loading semantic search model (all-MiniLM-L6-v2)…",
     });
 
     const { pipeline } = await import("@huggingface/transformers");
@@ -136,11 +136,11 @@ export async function init(onProgress?: (p: InitProgress) => void): Promise<void
  * The actual mp4 on disk is:
  *   `D:/ask_anything_ia_videos_raw/<ia_id>__<video_stem>_lowres.mp4`
  *
- * Vite middleware serves that directory at `/videos/`.
+ * Vite middleware serves that directory at `/static_assets/videos/`.
  */
 function videoUrlFromSource(sourceFile: string): string {
   const videoFilename = sourceFile.replace(/\.qa_text\.json$/, ".mp4");
-  return `/videos/${encodeURIComponent(videoFilename)}`;
+  return `/static_assets/videos/${encodeURIComponent(videoFilename)}`;
 }
 
 /**

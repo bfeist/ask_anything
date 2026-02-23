@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Code standards & build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: "☁️ Checkout repository"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "🔧 Setup Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: "📦 Install dependencies"
+        run: npm ci
+
+      - name: "🔎 Lint code"
+        run: npm run lint
+
+      - name: "� Type check"
+        run: npm run tsc
+
+      - name: "�🚀 Build the project"
+        run: npm run build
+
+      - name: "🧪 Run tests"
+        run: npm run test
+
+      - name: "📤 Deploy to DreamHost"
+        env:
+          DREAMHOST_USER: ${{ vars.INTERSERVER_USER }}
+          INTERSERVER_HOST: ${{ vars.INTERSERVER_HOST }}
+          INTERSERVER_PATH: ${{ vars.INTERSERVER_PATH }}
+          SSHPASS: ${{ secrets.INTERSERVER_PASS }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y sshpass
+
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$INTERSERVER_HOST" >> ~/.ssh/known_hosts
+
+          sshpass -e ssh "$INTERSERVER_USER@$INTERSERVER_HOST" "mkdir -p $INTERSERVER_PATH"
+
+          if [ -d ./dist ]; then
+            # Exclude static_assets from sync and deletion - manually managed on server
+            sshpass -e rsync -avz --delete --exclude='static_assets/' ./dist/ "$INTERSERVER_USER@$INTERSERVER_HOST":"$INTERSERVER_PATH"
+          else
+            echo "Error: ./dist directory is missing. Skipping deployment."
+            exit 1
+          fi

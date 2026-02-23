@@ -22,9 +22,9 @@ function localMediaPlugin(): Plugin {
 
         const decoded = decodeURIComponent(req.url);
 
-        // Serve videos at /videos/<filename>.mp4
-        if (decoded.startsWith("/videos/")) {
-          const filename = decoded.slice("/videos/".length);
+        // Serve videos at /static_assets/videos/<filename>.mp4
+        if (decoded.startsWith("/static_assets/videos/")) {
+          const filename = decoded.slice("/static_assets/videos/".length);
           const filePath = path.join(VIDEO_DIR, filename);
 
           if (!fs.existsSync(filePath)) {
@@ -61,9 +61,9 @@ function localMediaPlugin(): Plugin {
           return;
         }
 
-        // Serve search index files at /data/search_index/<file>
-        if (decoded.startsWith("/data/")) {
-          const relPath = decoded.slice("/data/".length);
+        // Serve data files at /static_assets/data/<file>
+        if (decoded.startsWith("/static_assets/data/")) {
+          const relPath = decoded.slice("/static_assets/data/".length);
           const filePath = path.join(DATA_DIR, relPath);
 
           if (!fs.existsSync(filePath)) {

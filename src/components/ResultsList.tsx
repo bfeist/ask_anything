@@ -30,12 +30,7 @@ export default function ResultsList({
   query,
 }: Props): React.JSX.Element {
   if (!query) {
-    return (
-      <div className="results-empty">
-        Type a question above to search across {">"}4,000 questions from NASA astronaut Q&amp;A
-        sessions.
-      </div>
-    );
+    return <div className="results-empty">Enter a search query to find matching questions.</div>;
   }
 
   if (isSearching) {
