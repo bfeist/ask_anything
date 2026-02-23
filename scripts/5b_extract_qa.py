@@ -53,7 +53,7 @@ from astro_ia_harvest.config import (  # noqa: E402
     ensure_directories,
     env_or_default,
 )
-from astro_ia_harvest.ollama_client import call_ollama, extract_json  # noqa: E402
+from astro_ia_harvest.ollama_client import call_ollama  # noqa: E402
 from astro_ia_harvest.transcript_utils import (  # noqa: E402
     format_diarized_transcript,
     format_plain_transcript,
@@ -139,17 +139,17 @@ or student question.
 5. Skip preamble, voice checks, Mission Control chatter, and closing remarks.
 6. Output items in CHRONOLOGICAL ORDER by question_start.
 
-For each pair output ONLY:
-   - question_start: timestamp (seconds, float) where student starts speaking
-   - question_end: timestamp (float) where student finishes their question
-   - answers: An array with ONE object for the astronaut's answer:
-     [{{"answer_start": <float>, "answer_end": <float>}}]
-
 Do NOT include any text, names, or affiliations — ONLY timestamps.
-Every timestamp MUST be a number (float). Never use null.
+Every timestamp MUST be a number (float).
 IMPORTANT: Process the ENTIRE transcript. Do NOT stop early.
 
-Respond ONLY with a JSON array of objects. No markdown fencing, no commentary.\
+Output ONE line per Q&A pair in this exact pipe-delimited format:
+  question_start|question_end|answer_start|answer_end
+
+Example:
+  899.7|927.7|928.8|982.4
+
+No headers, no commentary, no blank lines, no JSON, no markdown.\
 """
 
 EXTRACT_PROMPT_PRESS_CONFERENCE = """\
@@ -181,7 +181,7 @@ someone DIFFERENT who answers. If the same speaker asks AND answers, it is NOT v
 2. question_start to question_end is the ENTIRE span where the questioner speaks, \
 including setup/context/multi-part questions.
 3. answer_start to answer_end covers ONLY the respondent (a different speaker). \
-Do NOT include the questioner's own statements in the answers array.
+Do NOT include the questioner's own statements in the answers.
 4. If the questioner speaks again after the respondent, that starts a NEW exchange, \
 not part of the previous answer.
 5. Each answer segment must be at least 10 seconds long — brief acknowledgments \
@@ -193,20 +193,21 @@ Your task:
 2. Use speaker labels to determine boundaries. When the speaker changes from the \
 respondent back to a questioner, the answer ends.
 3. If MULTIPLE panelists answer the SAME question (different speakers), include EACH \
-as a separate entry in the "answers" array.
-4. For each Q&A pair output ONLY:
-   - question_start: timestamp where the questioner starts speaking
-   - question_end: timestamp where the questioner finishes (before a DIFFERENT \
-speaker begins answering)
-   - answers: Array of answer objects from DIFFERENT speaker(s) than the questioner:
-     [{"answer_start": <float>, "answer_end": <float>}, ...]
+as a separate answer on the same line.
 
 Do NOT include any text, names, or affiliations — ONLY timestamps.
 IMPORTANT: Process the ENTIRE transcript from start to finish. Do NOT stop early.
 A typical NASA press conference has 10-15 questions. If you have found fewer than 8, \
 re-scan the transcript.
 
-Respond ONLY with a JSON array of objects. No markdown fencing, no commentary.\
+Output ONE line per Q&A pair in this exact pipe-delimited format:
+  question_start|question_end|answer1_start|answer1_end[|answer2_start|answer2_end]
+
+Examples:
+  Single answerer:     899.7|927.7|928.8|982.4
+  Multiple answerers:  899.7|927.7|928.8|982.4|983.0|1010.5
+
+No headers, no commentary, no blank lines, no JSON, no markdown.\
 """
 
 EXTRACT_PROMPT_MEDIA_INTERVIEW = """\
@@ -226,7 +227,7 @@ valid Q&A pair.
 2. question_start to question_end covers the ENTIRE span where the host speaks \
 their question, including setup and context.
 3. answer_start to answer_end covers ONLY the astronaut's response (a DIFFERENT \
-speaker). Do NOT include the host's own statements in the answers array.
+speaker). Do NOT include the host's own statements in the answers.
 4. If the host speaks again after the astronaut, that is either a new question or \
 a transition — NOT part of the previous answer.
 5. Do NOT include the host's introduction, greetings, sign-off, or Mission Control \
@@ -234,25 +235,26 @@ voice checks as Q&A pairs.
 6. Only include actual QUESTIONS (interrogative statements or clear prompts) \
 followed by substantive answers from a different speaker.
 7. If both astronauts answer the same question sequentially, include EACH answer \
-as a separate entry in the "answers" array.
+on the same line.
 8. Output items in CHRONOLOGICAL ORDER by question_start timestamp.
 
 Your task:
 1. Identify EVERY question from the interviewer and the astronaut's answer(s).
 2. Use speaker labels to determine boundaries — when the speaker changes from the \
 astronaut back to the host, the answer ends.
-3. For each Q&A pair output ONLY:
-   - question_start: timestamp where the host starts asking
-   - question_end: timestamp where the host finishes (before a DIFFERENT speaker \
-begins answering)
-   - answers: Array of answer objects from DIFFERENT speaker(s) than the host:
-     [{{"answer_start": <float>, "answer_end": <float>}}, ...]
 
 Do NOT include any text, names, or affiliations — ONLY timestamps.
 IMPORTANT: Process the ENTIRE transcript from start to finish. Do NOT stop early.
 A typical media interview has 5-15 questions.
 
-Respond ONLY with a JSON array of objects. No markdown fencing, no commentary.\
+Output ONE line per Q&A pair in this exact pipe-delimited format:
+  question_start|question_end|answer1_start|answer1_end[|answer2_start|answer2_end]
+
+Examples:
+  Single answerer:     899.7|927.7|928.8|982.4
+  Multiple answerers:  899.7|927.7|928.8|982.4|983.0|1010.5
+
+No headers, no commentary, no blank lines, no JSON, no markdown.\
 """
 
 EXTRACT_PROMPT_GENERIC = """\
@@ -276,16 +278,18 @@ from one speaker, followed by a response from a DIFFERENT speaker.
 Your task:
 1. Identify EVERY Q&A exchange from beginning to end.
 2. Skip opening remarks, prepared statements, and closing remarks.
-3. For each Q&A pair output ONLY:
-   - question_start: timestamp where the question begins
-   - question_end: timestamp where the question ends
-   - answers: Array of answer objects from DIFFERENT speaker(s) than the questioner:
-     [{{"answer_start": <float>, "answer_end": <float>}}, ...]
 
 Do NOT include any text, names, or affiliations — ONLY timestamps.
 IMPORTANT: Process the ENTIRE transcript. Do NOT stop early.
 
-Respond ONLY with a JSON array of objects. No markdown fencing, no commentary.\
+Output ONE line per Q&A pair in this exact pipe-delimited format:
+  question_start|question_end|answer1_start|answer1_end[|answer2_start|answer2_end]
+
+Examples:
+  Single answerer:     899.7|927.7|928.8|982.4
+  Multiple answerers:  899.7|927.7|928.8|982.4|983.0|1010.5
+
+No headers, no commentary, no blank lines, no JSON, no markdown.\
 """
 
 EXTRACT_PROMPTS = {
@@ -296,16 +300,14 @@ EXTRACT_PROMPTS = {
     "other": EXTRACT_PROMPT_GENERIC,
 }
 
-# Appended to the retry prompt when the first response contains null timestamps.
-_SCHEMA_REMINDER = (
-    "\n\nYOUR PREVIOUS RESPONSE CONTAINED null VALUES FOR TIMESTAMP FIELDS. "
-    "THIS IS NOT ALLOWED.\n"
-    "Every timestamp field MUST be a number (float). "
-    "If you are uncertain about a boundary, OMIT the entire pair rather than using null.\n"
-    "Required schema — no other fields, no null values:\n"
-    '  {"question_start": <float>, "question_end": <float>, '
-    '"answers": [{"answer_start": <float>, "answer_end": <float>}]}\n'
-    "Respond ONLY with a corrected JSON array. No markdown fencing, no commentary."
+# Appended to the retry prompt when the first response was unparseable.
+_RETRY_REMINDER = (
+    "\n\nYOUR PREVIOUS RESPONSE COULD NOT BE PARSED. "
+    "You MUST output ONLY pipe-delimited lines with no other text.\n"
+    "Format: question_start|question_end|answer_start|answer_end\n"
+    "Example: 899.7|927.7|928.8|982.4\n"
+    "Multiple answerers: 899.7|927.7|928.8|982.4|983.0|1010.5\n"
+    "Every value must be a decimal number. No headers, no commentary, no JSON.\n"
 )
 
 
@@ -329,6 +331,46 @@ def _validate_qa_pairs(pairs: list[dict]) -> tuple[list[dict], list[dict]]:
         )
         (malformed if bad_answer else valid).append(p)
     return valid, malformed
+
+
+def parse_pipe_qa(raw: str) -> list[dict]:
+    """Parse pipe-delimited Q&A output from the LLM into structured dicts.
+
+    Expected format (one line per Q&A pair):
+        question_start|question_end|answer1_start|answer1_end[|answer2_start|answer2_end]
+
+    Returns a list of dicts matching the qa_pairs schema.  Malformed lines are
+    silently skipped so the pipeline never crashes on bad LLM output.
+    """
+    pairs: list[dict] = []
+    for line in raw.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Skip lines that are clearly commentary (start with a letter, bracket, etc.)
+        if line[0].isalpha() or line.startswith("[") or line.startswith("{"):
+            continue
+        parts = line.split("|")
+        floats: list[float] = []
+        for p in parts:
+            p = p.strip()
+            try:
+                floats.append(float(p))
+            except (ValueError, TypeError):
+                break  # stop at first non-float field
+        # Need at least 4 values (q_start, q_end, a_start, a_end) and even count
+        if len(floats) < 4 or len(floats) % 2 != 0:
+            continue
+        answers = [
+            {"answer_start": floats[i], "answer_end": floats[i + 1]}
+            for i in range(2, len(floats), 2)
+        ]
+        pairs.append({
+            "question_start": floats[0],
+            "question_end": floats[1],
+            "answers": answers,
+        })
+    return pairs
 
 
 # ---------------------------------------------------------------------------
@@ -399,49 +441,39 @@ def run_extraction(
         raw = call_ollama(
             ollama_url, model, user_prompt,
             system=system_prompt, temperature=temperature,
-            num_predict=16384,
+            num_predict=8192,
         )
         elapsed = time.time() - t0
         total_elapsed += elapsed
         raw_parts.append(raw)
 
-        result = extract_json(raw)
-        _was_truncated = (
-            isinstance(result, list)
-            and not raw.rstrip().endswith("]")
-            and not raw.rstrip().endswith("```")
-        )
-        if isinstance(result, list):
-            if _was_truncated:
-                print(f"    -> repaired truncated JSON (salvaged {len(result)} objects)")
-            valid, malformed = _validate_qa_pairs(result)
-            if malformed:
-                print(f"    -> {len(malformed)} malformed pair(s) in chunk {ci} "
-                      f"(null timestamps) — retrying...")
-                retry_prompt = user_prompt + _SCHEMA_REMINDER
-                t0r = time.time()
-                raw2 = call_ollama(
-                    ollama_url, model, retry_prompt,
-                    system=system_prompt, temperature=temperature,
-                    num_predict=16384,
-                )
-                elapsed_r = time.time() - t0r
-                total_elapsed += elapsed_r
-                raw_parts.append(raw2)
-                result2 = extract_json(raw2)
-                if isinstance(result2, list):
-                    valid, still_bad = _validate_qa_pairs(result2)
-                    if still_bad:
-                        print(f"    -> retry: {len(still_bad)} still malformed "
-                              f"— dropping them")
-                    print(f"    -> retry: {len(valid)} valid pairs in {elapsed_r:.1f}s")
-                else:
-                    print(f"    -> retry failed to parse ({elapsed_r:.1f}s): {raw2[:200]}")
+        parsed = parse_pipe_qa(raw)
+        valid, malformed = _validate_qa_pairs(parsed)
+        if not valid and raw.strip():
+            # Nothing parsed — retry once with format reminder
+            print(f"    -> 0 pairs parsed from chunk {ci} — retrying...")
+            retry_prompt = user_prompt + _RETRY_REMINDER
+            t0r = time.time()
+            raw2 = call_ollama(
+                ollama_url, model, retry_prompt,
+                system=system_prompt, temperature=temperature,
+                num_predict=8192,
+            )
+            elapsed_r = time.time() - t0r
+            total_elapsed += elapsed_r
+            raw_parts.append(raw2)
+            parsed2 = parse_pipe_qa(raw2)
+            valid, malformed = _validate_qa_pairs(parsed2)
+            if valid:
+                print(f"    -> retry: {len(valid)} pairs in {elapsed_r:.1f}s")
             else:
-                print(f"    -> {len(valid)} pairs in {elapsed:.1f}s")
-            all_pairs.extend(valid)
+                print(f"    -> retry also failed ({elapsed_r:.1f}s): {raw2[:200]}")
+        elif malformed:
+            print(f"    -> {len(valid)} valid, {len(malformed)} malformed (dropped) "
+                  f"in {elapsed:.1f}s")
         else:
-            print(f"    -> FAILED to parse chunk {ci} ({elapsed:.1f}s): {raw[:200]}")
+            print(f"    -> {len(valid)} pairs in {elapsed:.1f}s")
+        all_pairs.extend(valid)
 
     print(f"  Total extraction time: {total_elapsed:.1f}s")
 
@@ -488,17 +520,19 @@ def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
     for p in pairs:
         _strip_name_fields(p)
 
-    # Step 3: merge entries with overlapping/nearby question timestamps
+    # Step 3: merge entries with overlapping/nearby question START timestamps.
+    # This deduplicates the same question detected in overlapping chunks.
+    # IMPORTANT: We compare against the ORIGINAL question_start only (stored
+    # in _orig_qs) to prevent cascading merges that snowball a growing
+    # question_end window across the entire transcript.
     MERGE_THRESHOLD = 15.0  # seconds
-    merged = []
+    merged: list[dict] = []
     for p in sorted(pairs, key=lambda x: x.get("question_start") or 0):
         qs = p.get("question_start") or 0
-        qe = p.get("question_end") or 0
         matched = False
         for m in merged:
-            mqs = m.get("question_start") or 0
-            mqe = m.get("question_end") or 0
-            if abs(qs - mqs) <= MERGE_THRESHOLD or (mqs <= qs <= mqe):
+            m_orig_qs = m.get("_orig_qs") or m.get("question_start") or 0
+            if abs(qs - m_orig_qs) <= MERGE_THRESHOLD:
                 # Merge: extend question window and add answers
                 m["question_start"] = min(m.get("question_start") or 0, p.get("question_start") or 0)
                 m["question_end"] = max(m.get("question_end") or 0, p.get("question_end") or 0)
@@ -513,7 +547,12 @@ def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
                 matched = True
                 break
         if not matched:
+            p["_orig_qs"] = qs
             merged.append(p)
+
+    # Remove internal tracking key
+    for m in merged:
+        m.pop("_orig_qs", None)
 
     # Step 4: sort chronologically and sort each answers list by answer_start
     for m in merged:
@@ -524,30 +563,24 @@ def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
     # Step 5: absorb chunk-overlap artifacts — entries whose question
     # window overlaps with a prior entry's question window (same question
     # detected in overlapping chunks).  We ONLY merge when the new pair's
-    # question significantly overlaps the previous pair's question or answer
-    # range AND the new pair starts within the overlap region.  Adjacent
-    # pairs (next question starts right after previous answer) must NOT
-    # be merged — they are separate Q&A exchanges.
+    # question_start falls BEFORE the previous pair's ORIGINAL question_end.
+    # We track the original question_end to prevent cascading merges.
     OVERLAP_TOLERANCE = 5.0  # seconds of slack for chunk-boundary artifacts
     cleaned: list[dict] = []
     for p in sorted_pairs:
         if cleaned:
             prev = cleaned[-1]
-            prev_qe = prev.get("question_end") or 0
-            prev_answer_end = max(
-                (a.get("answer_end") or 0 for a in prev.get("answers", [])), default=0
-            )
+            prev_orig_qe = prev.get("_orig_qe") or prev.get("question_end") or 0
             qs = p.get("question_start") or 0
             qe = p.get("question_end") or 0
 
             # Only merge if the NEW question starts BEFORE the previous
-            # question ends (genuine duplicate) — not merely before the
-            # previous answer ends (which would be a separate exchange).
-            is_dup_question = qs < prev_qe - OVERLAP_TOLERANCE
+            # question's ORIGINAL end (genuine duplicate from chunk overlap).
+            is_dup_question = qs < prev_orig_qe - OVERLAP_TOLERANCE
 
             if is_dup_question:
                 # Merge: extend question window, fold in new answers
-                prev["question_end"] = max(prev_qe or 0, qe or 0)
+                prev["question_end"] = max(prev.get("question_end") or 0, qe or 0)
                 existing_starts = {a.get("answer_start") for a in prev["answers"]}
                 for a in p.get("answers", []):
                     a_start = a.get("answer_start", 0)
@@ -558,7 +591,12 @@ def normalize_qa_pairs(pairs: list[dict]) -> list[dict]:
                     prev["answers"], key=lambda a: a.get("answer_start") or 0
                 )
                 continue
+        p["_orig_qe"] = p.get("question_end") or 0
         cleaned.append(p)
+
+    # Remove internal tracking key
+    for c in cleaned:
+        c.pop("_orig_qe", None)
 
     # Step 6: fix / filter pairs with overlapping Q/A timestamps.
     # The LLM sometimes sets answer_start = question_start. Fix these
@@ -734,14 +772,22 @@ def process_transcript(
             return False
 
     # Extraction
-    if not segments:
-        print(f"  Skipping Q&A extraction — transcript has no segments.")
+    MIN_TEXT_CHARS = 200  # skip transcripts with negligible text content
+    total_text = sum(len(s.get("text", "")) for s in segments)
+    if not segments or total_text < MIN_TEXT_CHARS:
+        reason = "empty_transcript" if not segments else "insufficient_text"
+        detail = (
+            "Empty transcript (no segments)."
+            if not segments
+            else f"Transcript too short ({total_text} chars, min {MIN_TEXT_CHARS})."
+        )
+        print(f"  Skipping Q&A extraction — {detail}")
         _record_empty(
             transcript_path,
             event_type=event_type,
             confidence=confidence,
             model=model,
-            reason="empty_transcript",
+            reason=reason,
         )
         print(f"  Logged to {QA_EMPTY_JSONL.name}")
         output = {
@@ -751,7 +797,7 @@ def process_transcript(
             "event_type_confidence": confidence,
             "extracted_at": datetime.now(timezone.utc).isoformat(),
             "skipped": True,
-            "skip_reason": "Empty transcript (no segments).",
+            "skip_reason": detail,
             "qa_pairs": [],
         }
         out_path = QA_DIR / (transcript_path.stem + ".qa.json")
@@ -782,7 +828,7 @@ def process_transcript(
     )
 
     if qa_pairs is None:
-        print("\nFAILED to parse JSON from response.")
+        print("\nFAILED to parse Q&A from response.")
         print("Raw response (first 1000 chars):")
         print(raw[:1000])
         _record_empty(
