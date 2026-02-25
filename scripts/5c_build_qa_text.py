@@ -6,6 +6,10 @@ reconstructs the verbatim question and answer text by slicing transcript
 segments at the stored timestamps.  Speaker attribution is added by
 finding the dominant speaker (by talk-time) in each time window.
 
+This script is a PURE RECONSTRUCTION tool — it contains no filtering or
+quality-gate logic.  All content quality decisions are made in Stage 5b.
+The output is intended for spot-checking and human review only; Stage 6
+does not depend on this script.
 
 Usage:
   uv run python scripts/5c_build_qa_text.py
@@ -165,7 +169,7 @@ def process_qa_file(qa_path: Path, *, force: bool = False) -> bool:
     segments = transcript["segments"]
     qa_pairs_raw = qa_data.get("qa_pairs", [])
 
-    # Build text pairs
+    # Build text pairs — pure reconstruction, no filtering
     built_pairs = []
     for i, pair in enumerate(qa_pairs_raw, 1):
         try:
@@ -180,58 +184,9 @@ def process_qa_file(qa_path: Path, *, force: bool = False) -> bool:
         except Exception as exc:
             print(f"  WARNING: Pair {i} failed: {exc}")
 
-    # ---- Post-processing filters ----
-    # 1. Drop pairs where ALL answers come from the same speaker as the
-    #    question.  This typically means the "questioner" is just continuing
-    #    to talk and there is no real answer.
-    # 2. Drop pairs with empty question text (diarization/transcript gap).
-    # 3. Drop pairs with zero answers.
-    event_type = qa_data.get("event_type", "unknown")
-    pre_count = len(built_pairs)
-    clean_pairs = []
-    for p in built_pairs:
-        q_speaker = p["question"].get("speaker")
-        q_text = p["question"].get("text", "").strip()
-        answers = p.get("answers", [])
-
-        # Drop empty questions
-        if not q_text:
-            continue
-
-        # Drop answerless pairs
-        if not answers:
-            continue
-
-        # Drop self-answered pairs (questioner answered their own question)
-        if q_speaker and all(a.get("speaker") == q_speaker for a in answers):
-            continue
-
-        # Drop voice-checks and greetings (very short non-substantive
-        # exchanges that the LLM sometimes captures)
-        q_words = q_text.split()
-        if len(q_words) <= 8:
-            q_lower = q_text.lower().rstrip("?.! ")
-            if any((
-                "hear me" in q_lower,
-                "hear us" in q_lower,
-                q_lower.startswith(("hello", "hi ", "hey ", "good morning",
-                                    "good afternoon", "good evening")),
-                "checking" in q_lower and any(w in q_lower for w in ("audio", "video", "connection")),
-                "are we connected" in q_lower,
-                "can you see" in q_lower,
-                "can you hear" in q_lower,
-            )):
-                continue
-
-        clean_pairs.append(p)
-
     # Re-index
-    for i, p in enumerate(clean_pairs, 1):
+    for i, p in enumerate(built_pairs, 1):
         p["index"] = i
-
-    dropped = pre_count - len(clean_pairs)
-    if dropped:
-        print(f"  Dropped {dropped} low-quality pair(s) (self-answered / empty)")
 
     # Assemble output
     output = {
@@ -241,12 +196,12 @@ def process_qa_file(qa_path: Path, *, force: bool = False) -> bool:
         "event_type_confidence": qa_data.get("event_type_confidence", "unknown"),
         "extracted_at": qa_data.get("extracted_at"),
         "built_at": datetime.now(timezone.utc).isoformat(),
-        "num_pairs": len(clean_pairs),
-        "qa_pairs": clean_pairs,
+        "num_pairs": len(built_pairs),
+        "qa_pairs": built_pairs,
     }
 
     out_path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"  Saved {len(clean_pairs)} pairs -> {out_path}")
+    print(f"  Saved {len(built_pairs)} pairs -> {out_path}")
     return True
 
 

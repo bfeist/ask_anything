@@ -16,6 +16,9 @@ model via transformers.js, embeds the user's query, widens the stored
 float16 embeddings to float32, and computes cosine similarity — zero server
 traffic required.
 
+This script is a PURE INDEX BUILDER — it contains no content filtering.
+All quality decisions are made upstream in Stage 5b during extraction.
+
 Usage:
   uv run python scripts/6_build_search_index.py
   uv run python scripts/6_build_search_index.py --force
@@ -55,38 +58,6 @@ INDEX_META_FILE = "index_meta.json"
 QUESTIONS_FILE = "questions.json"
 EMBEDDINGS_FILE = "embeddings.bin"
 
-# Minimum word count for a question to be worth indexing.
-# Single-word greetings ("Hi") or bare names ("My name is Soham") produce
-# embeddings that pollute similarity results.
-MIN_QUESTION_WORDS = 5
-
-
-def _apply_min_words(value: int) -> None:
-    """Update the global minimum word threshold (for CLI override)."""
-    global MIN_QUESTION_WORDS
-    MIN_QUESTION_WORDS = value
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# Boilerplate phrases from mission control comms that sometimes get captured
-# as "questions" by the upstream LLM extraction.  Matched case-insensitively.
-_BOILERPLATE_PHRASES = (
-    "are you ready for the event",
-    "this concludes the event",
-    "this concludes our event",
-    "thank you to all participants",
-    "station, this is houston",
-    "houston, this is station",
-    "we are ready for the event",
-)
-
-
-def _is_boilerplate(text: str) -> bool:
-    """Return True if text is mission-control boilerplate, not a real question."""
-    lower = text.lower()
-    return any(phrase in lower for phrase in _BOILERPLATE_PHRASES)
-
 
 # ---------------------------------------------------------------------------
 
@@ -111,6 +82,9 @@ def extract_questions(qa_text: dict, source_filename: str) -> list[dict]:
     Each record carries enough metadata to reference back to the original
     video at the correct timestamp — but intentionally omits answer text
     to keep the index compact.
+
+    No content filtering is applied here; all quality decisions are made
+    upstream in Stage 5b.
     """
     questions: list[dict] = []
 
@@ -118,21 +92,14 @@ def extract_questions(qa_text: dict, source_filename: str) -> list[dict]:
         q = pair.get("question", {})
         text = (q.get("text") or "").strip()
 
-        # Skip non-substantive questions
-        if len(text.split()) < MIN_QUESTION_WORDS:
-            continue
-
-        # Skip mission-control boilerplate
-        if _is_boilerplate(text):
+        if not text:
             continue
 
         # Build answer timing references (no text)
-        answer_timings = []
-        for ans in pair.get("answers", []):
-            answer_timings.append({
-                "start": ans["start"],
-                "end": ans["end"],
-            })
+        answer_timings = [
+            {"start": ans["start"], "end": ans["end"]}
+            for ans in pair.get("answers", [])
+        ]
 
         questions.append({
             "text": text,
@@ -216,7 +183,6 @@ def save_index_meta(num_questions: int, path: Path) -> None:
         "embedding_dim": EMBEDDING_DIM,
         "embedding_dtype": "float16",
         "num_questions": num_questions,
-        "min_question_words": MIN_QUESTION_WORDS,
         "built_at": datetime.now(timezone.utc).isoformat(),
         "files": {
             "questions": QUESTIONS_FILE,
@@ -343,16 +309,9 @@ def main() -> None:
         "--force", action="store_true",
         help="Rebuild the entire index even if it already exists.",
     )
-    parser.add_argument(
-        "--min-words", type=int, default=MIN_QUESTION_WORDS,
-        help=f"Minimum word count for indexable questions (default: {MIN_QUESTION_WORDS}).",
-    )
     args = parser.parse_args()
 
     ensure_directories()
-
-    # Allow runtime override of the word threshold
-    _apply_min_words(args.min_words)
 
     print("=" * 70)
     print("Stage 6: Build Semantic Search Index")
@@ -361,7 +320,6 @@ def main() -> None:
     print(f"  Output dir:     {SEARCH_INDEX_DIR}")
     print(f"  Model:          {MODEL_NAME}")
     print(f"  Embedding dim:  {EMBEDDING_DIM}")
-    print(f"  Min words:      {MIN_QUESTION_WORDS}")
 
     if args.qa_text_file:
         if not args.qa_text_file.exists():
