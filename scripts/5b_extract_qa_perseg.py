@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Stage 5x: Per-segment Q&A extraction.
-
-Replaces both 5a (classification) and 5b (chunk-based extraction) — event-type
-classification is optional and no content types are skipped.  The two-pass
-approach naturally produces zero pairs for content without Q&A.
+"""Stage 5b: Per-segment Q&A extraction.
 
 Two-pass approach:
 
@@ -21,20 +17,11 @@ Two-pass approach:
     Each call is small (~1-2 min of transcript) and independent, so they
     can be fully parallelised with --workers N.
 
-Advantages over 5b:
-  - Nothing in the transcript is ever "out of scope" — every segment is
-    evaluated, vs. 5b's risk of a question landing in an ignored chunk.
-  - Pass 2 LLM context is minimal (~100 segments), reducing hallucination.
-  - Natural parallelism: all confirmation calls are independent.
-
-The output format is identical to 5b (.qa.json) so downstream scripts
-(5c, 6) work unchanged.
-
 Usage:
-  uv run python scripts/5x_extract_qa_perseg.py
-  uv run python scripts/5x_extract_qa_perseg.py --transcript data/transcripts/<file>.json
-  uv run python scripts/5x_extract_qa_perseg.py --workers 4
-  uv run python scripts/5x_extract_qa_perseg.py --force
+  uv run python scripts/5b_extract_qa_perseg.py
+  uv run python scripts/5b_extract_qa_perseg.py --transcript data/transcripts/<file>.json
+  uv run python scripts/5b_extract_qa_perseg.py --workers 4
+  uv run python scripts/5b_extract_qa_perseg.py --force
 """
 
 from __future__ import annotations
@@ -52,7 +39,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from astro_ia_harvest.config import (  # noqa: E402
-    CLASSIFY_DIR,
     DEFAULT_OLLAMA_MODEL,
     DEFAULT_OLLAMA_URL,
     NO_AUDIO_JSONL,
@@ -83,17 +69,6 @@ from astro_ia_harvest.transcript_utils import (  # noqa: E402
 # Constants
 # ---------------------------------------------------------------------------
 
-EVENT_TYPES = (
-    "student_qa",
-    "press_conference",
-    "media_interview",
-    "panel",
-    "produced_content",
-    "other",
-)
-
-USE_DIARIZATION_FOR = {"press_conference", "media_interview", "panel", "student_qa"}
-
 # Default context window around each candidate anchor
 DEFAULT_WINDOW_PRE = 20.0   # seconds of context before the candidate
 DEFAULT_WINDOW_POST = 90.0  # seconds of context after the candidate
@@ -104,13 +79,39 @@ DEFAULT_GROUP_GAP = 10.0  # seconds
 # Interrogative words/phrases that mark the start of a likely question
 _INTERROGATIVE_STARTS = re.compile(
     r"^\s*(what|who|when|where|how|why|which|whose|whom"
-    r"|could\s+you|would\s+you|can\s+you|will\s+you"
-    r"|do\s+you|did\s+you|does\s+\w|have\s+you|has\s+\w"
-    r"|were\s+you|are\s+you|is\s+there|are\s+there"
-    r"|tell\s+(?:us|me)\b|talk\s+(?:us|me)\s+through|describe\s+\w"
-    r"|walk\s+(?:us|me)\s+through"
-    r"|i\s+(?:'m|am|was)\s+curious"
-    r"|so\s+(?:what|how|why|when|where|who|tell)\b"
+    # Auxiliary verb questions — expanded beyond just "you" to include any subject
+    r"|can\s+\w+|could\s+\w+|will\s+\w+|would\s+\w+|should\s+\w+|might\s+\w+"
+    r"|do\s+\w+|did\s+\w+|does\s+\w+"
+    r"|have\s+\w+|has\s+\w+"
+    r"|is\s+\w+|are\s+\w+|was\s+\w+|were\s+\w+"
+    # Directives / invitations
+    r"|tell\s+(?:us|me)\b|talk\s+(?:us|me)\s+through|describe\s+\w+"
+    r"|walk\s+(?:us|me)\s+through|share\s+(?:what|how|why|with)\b"
+    # First-person intro phrases
+    r"|i(?:\s*'m|\s+am|\s+was)\s+(?:curious|wondering)\b"
+    r"|i\s+(?:was\s+wondering|would\s+(?:like|love)\s+to|have\s+a\s+question|wanted\s+to\s+(?:ask|know))\b"
+    # Student / audience intro: "My question is…" / "My name is…, my question…"
+    r"|my\s+(?:question|name)\b"
+    # Short-form questions
+    r"|any\b"
+    # "Since <you/it/we>…" preamble leading to a question
+    r"|since\b"
+    # "Now, <question-word>…" moderator/interviewer pivot
+    r"|now\s*,?\s*(?:what|how|why|when|where|who|will|would|can|could|are|is|were|was|do|does|did|for|tell)\b"
+    # "So what/how/…" or "So can/could/…" with optional comma
+    r"|so\s*,?\s*(?:what|how|why|when|where|who|tell|can|could|will|would|should|do|does|did|is|are|was|were|have|has)\b"
+    # "But how/what/…" — common interviewer follow-up pivot
+    r"|but\s+(?:what|how|why|when|where|who|can|could|will|would|do|does|did|is|are|was|were)\b"
+    # "For all/the/you/us… <question>" — moderator addressing a specific person
+    r"|for\s+(?:all|the|each|every|those|you|us|any)\b"
+    # "This question / This one's from…"
+    r"|this\s+(?:question|one)\b"
+    # "If you…" conditional question setup
+    r"|if\s+you\b"
+    # "Anything about/that…?" — shorthand direct question
+    r"|anything\b"
+    # Moderator intro: "We have a question from…"
+    r"|we\s+(?:have|had)\s+a\b"
     r")\b",
     re.IGNORECASE,
 )
@@ -182,15 +183,11 @@ _RETRY_REMINDER = (
 def _record_empty(
     transcript_path: Path,
     *,
-    event_type: str,
-    confidence: str,
     model: str,
     reason: str,
 ) -> None:
     record = {
         "transcript_file": transcript_path.name,
-        "event_type": event_type,
-        "event_type_confidence": confidence,
         "model": model,
         "reason": reason,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -354,7 +351,6 @@ def confirm_candidate(
 
 def run_extraction(
     segments: list[dict],
-    event_type: str,
     ollama_url: str,
     model: str,
     temperature: float,
@@ -372,8 +368,7 @@ def run_extraction(
     if not segments:
         return None, 0.0, 0, 0
 
-    has_diarization = any(s.get("speaker") for s in segments)
-    use_diarized = event_type in USE_DIARIZATION_FOR and has_diarization
+    use_diarized = any(s.get("speaker") for s in segments)
 
     # ---- Pass 1 ----
     candidates = find_candidates(segments)
@@ -450,7 +445,6 @@ def process_transcript(
     model: str,
     ollama_url: str,
     temperature: float,
-    event_type_override: str | None,
     window_pre: float,
     window_post: float,
     group_gap: float,
@@ -464,41 +458,17 @@ def process_transcript(
     data = load_transcript(transcript_path)
     segments = data["segments"]
 
-    # Resolve event type
-    if event_type_override:
-        event_type = event_type_override
-        confidence = "override"
-        print(f"  Event type: {event_type} (user override)")
-    else:
-        cls_path = CLASSIFY_DIR / (transcript_path.stem + ".classify.json")
-        if cls_path.exists():
-            try:
-                cls = json.loads(cls_path.read_text(encoding="utf-8"))
-                event_type = cls["event_type"]
-                confidence = cls.get("confidence", "low")
-                print(f"  Event type: {event_type} (from .classify.json, {confidence})")
-            except (json.JSONDecodeError, KeyError):
-                event_type = "unknown"
-                confidence = "none"
-                print("  Event type: unknown (classify.json unreadable)")
-        else:
-            event_type = "unknown"
-            confidence = "none"
-            print("  Event type: unknown (no .classify.json)")
-
-    # Short-circuit for types with no Q&A
     MIN_TEXT_CHARS = 200
     total_text = sum(len(s.get("text", "")) for s in segments)
     if not segments or total_text < MIN_TEXT_CHARS:
         reason = "empty_transcript" if not segments else "insufficient_text"
         print(f"  Skipping — {reason}")
-        _record_empty(transcript_path, event_type=event_type,
-                      confidence=confidence, model=model, reason=reason)
+        _record_empty(transcript_path, model=model, reason=reason)
         return True
 
     # Two-pass extraction
     qa_pairs, elapsed, n_candidates, n_confirmed = run_extraction(
-        segments, event_type, ollama_url, model, temperature,
+        segments, ollama_url, model, temperature,
         window_pre=window_pre,
         window_post=window_post,
         group_gap=group_gap,
@@ -508,8 +478,7 @@ def process_transcript(
 
     if qa_pairs is None:
         print("  FAILED to extract Q&A.")
-        _record_empty(transcript_path, event_type=event_type,
-                      confidence=confidence, model=model, reason="extraction_failed")
+        _record_empty(transcript_path, model=model, reason="extraction_failed")
         return False
 
     # Quality filters
@@ -519,8 +488,7 @@ def process_transcript(
     if not qa_pairs:
         print(f"  0 Q&A pairs after filtering (candidates={n_candidates}, "
               f"confirmed={n_confirmed})")
-        _record_empty(transcript_path, event_type=event_type,
-                      confidence=confidence, model=model, reason="no_qa_found")
+        _record_empty(transcript_path, model=model, reason="no_qa_found")
         return True
 
     print(f"\n  {len(qa_pairs)} Q&A pairs "
@@ -542,8 +510,6 @@ def process_transcript(
     output = {
         "transcript_file": transcript_path.name,
         "model": model,
-        "event_type": event_type,
-        "event_type_confidence": confidence,
         "extracted_at": datetime.now(timezone.utc).isoformat(),
         "extraction_method": "per_segment",
         "pass1_candidates": n_candidates,
@@ -585,7 +551,7 @@ def _print_preview(qa_pairs: list[dict], segments: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Stage 5x: Per-segment Q&A extraction"
+        description="Stage 5b: Per-segment Q&A extraction"
     )
     parser.add_argument(
         "--transcript", type=Path, default=None,
@@ -594,10 +560,6 @@ def main() -> None:
     parser.add_argument("--model", default=env_or_default("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL))
     parser.add_argument("--ollama-url", default=env_or_default("OLLAMA_URL", DEFAULT_OLLAMA_URL))
     parser.add_argument("--temperature", type=float, default=0.1)
-    parser.add_argument(
-        "--event-type", choices=EVENT_TYPES, default=None,
-        help="Override event type (single-file mode only).",
-    )
     parser.add_argument(
         "--workers", type=int, default=1, metavar="N",
         help="Parallel Ollama workers for Pass 2 confirmation calls (default: 1).",
@@ -623,8 +585,7 @@ def main() -> None:
         help="Print NONE (rejected) groups in Pass 2 output.",
     )
     parser.add_argument(
-        "--force", nargs="?", const="all", default=None,
-        metavar="EVENT_TYPE",
+        "--force", action="store_true", default=False,
         help="Re-extract even if .qa.json already exists.",
     )
     args = parser.parse_args()
@@ -632,7 +593,7 @@ def main() -> None:
     ensure_directories()
 
     print("=" * 70)
-    print("Stage 5x: Per-Segment Q&A Extraction")
+    print("Stage 5b: Per-Segment Q&A Extraction")
     print("=" * 70)
     print(f"  Model:        {args.model}")
     print(f"  Ollama URL:   {args.ollama_url}")
@@ -650,7 +611,7 @@ def main() -> None:
     else:
         transcripts = sorted(
             p for p in TRANSCRIPTS_DIR.glob("*.json")
-            if ".qa" not in p.name and ".classify" not in p.name
+            if ".qa" not in p.name
         )
 
     print(f"  Transcripts:  {len(transcripts)}")
@@ -671,16 +632,12 @@ def main() -> None:
         print(f"  Skipped (no audio / non-English): {skipped_media}")
 
     # Filter already-processed unless --force
-    force_type = args.force
-    if force_type and force_type not in ("all", *EVENT_TYPES):
-        print(f"ERROR: Unknown event type for --force: {force_type}")
-        sys.exit(1)
+    force = args.force
 
     # Build set of stems already recorded as empty (no Q&A found / skipped)
-    # Also build a stem -> event_type map for forced re-extraction by event type
     empty_records = load_jsonl(QA_EMPTY_JSONL)
-    already_empty: dict[str, str] = {
-        Path(r["transcript_file"]).stem: r.get("event_type", "")
+    already_empty: set[str] = {
+        Path(r["transcript_file"]).stem
         for r in empty_records
         if "transcript_file" in r
     }
@@ -696,19 +653,12 @@ def main() -> None:
             except (json.JSONDecodeError, OSError):
                 pending.append(t)
                 continue
-            if force_type == "all":
+            if force:
                 pending.append(t)
                 forced += 1
-            elif force_type:
-                if qa_data.get("event_type") == force_type:
-                    pending.append(t)
-                    forced += 1
         elif t.stem in already_empty:
             # Previously attempted but produced no pairs — skip unless forced
-            if force_type == "all":
-                pending.append(t)
-                forced += 1
-            elif force_type and already_empty[t.stem] == force_type:
+            if force:
                 pending.append(t)
                 forced += 1
         else:
@@ -736,7 +686,6 @@ def main() -> None:
             model=args.model,
             ollama_url=args.ollama_url,
             temperature=args.temperature,
-            event_type_override=args.event_type,
             window_pre=args.window_pre,
             window_post=args.window_post,
             group_gap=args.group_gap,
