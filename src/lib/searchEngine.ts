@@ -7,11 +7,18 @@
  */
 
 // ---------------------------------------------------------------------------
-// Paths (relative to dev server root — Vite middleware serves these)
+// Paths — local dev-server or production remote, driven by VITE_PROD_DATA
+//
+// Local paths:  /static_assets/data/...   /static_assets/videos/...
+// Prod paths:   https://askanything.benfeist.com/static_assets/data/...
+//               https://askanything.benfeist.com/static_assets/videos/...
 // ---------------------------------------------------------------------------
-const INDEX_META_URL = "/static_assets/data/search_index/index_meta.json";
-const QUESTIONS_URL = "/static_assets/data/search_index/questions.json";
-const EMBEDDINGS_URL = "/static_assets/data/search_index/embeddings.bin";
+const PROD_DATA = import.meta.env.VITE_PROD_DATA === "true";
+const STATIC_ORIGIN = PROD_DATA ? "https://askanything.benfeist.com" : "";
+
+const INDEX_META_URL = `${STATIC_ORIGIN}/static_assets/data/search_index/index_meta.json`;
+const QUESTIONS_URL = `${STATIC_ORIGIN}/static_assets/data/search_index/questions.json`;
+const EMBEDDINGS_URL = `${STATIC_ORIGIN}/static_assets/data/search_index/embeddings.bin`;
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -128,19 +135,18 @@ export async function init(onProgress?: (p: InitProgress) => void): Promise<void
 // ---------------------------------------------------------------------------
 
 /**
- * Derive the Vite dev-server video URL from a `source_file` field.
+ * Derive a video URL from a `source_file` field.
  *
  * `source_file` looks like:
  *   `<ia_id>__<video_stem>_lowres.qa_text.json`
  *
- * The actual mp4 on disk is:
- *   `D:/ask_anything_ia_videos_raw/<ia_id>__<video_stem>_lowres.mp4`
- *
- * Vite middleware serves that directory at `/static_assets/videos/`.
+ * In dev the Vite middleware serves videos at `/static_assets/videos/`.
+ * When VITE_PROD_DATA=true, videos are served from the production server
+ * at `https://askanything.benfeist.com/data/videos/`.
  */
 function videoUrlFromSource(sourceFile: string): string {
   const videoFilename = sourceFile.replace(/\.qa_text\.json$/, ".mp4");
-  return `/static_assets/videos/${encodeURIComponent(videoFilename)}`;
+  return `${STATIC_ORIGIN}/static_assets/videos/${encodeURIComponent(videoFilename)}`;
 }
 
 /**
