@@ -182,6 +182,13 @@ function VideoPlayerInner({
         </div>
       </div>
 
+      {q.answer_text && (
+        <div className="video-answer">
+          <div className="video-answer-label">Answer transcript</div>
+          <p className="video-answer-text">{q.answer_text}</p>
+        </div>
+      )}
+
       <VideoQuestionsList
         sourceFile={result.question.source_file}
         activeQuestionId={activeQuestionId}

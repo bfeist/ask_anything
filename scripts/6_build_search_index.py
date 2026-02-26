@@ -101,6 +101,14 @@ def extract_questions(qa_text: dict, source_filename: str) -> list[dict]:
             for ans in pair.get("answers", [])
         ]
 
+        # Concatenate all answer texts into a single string for display
+        answer_texts = [
+            ans["text"].strip()
+            for ans in pair.get("answers", [])
+            if ans.get("text", "").strip()
+        ]
+        answer_text = " ".join(answer_texts) if answer_texts else ""
+
         questions.append({
             "text": text,
             "source_file": source_filename,
@@ -109,6 +117,7 @@ def extract_questions(qa_text: dict, source_filename: str) -> list[dict]:
             "question_start": q.get("start"),
             "question_end": q.get("end"),
             "answers": answer_timings,
+            "answer_text": answer_text,
         })
 
     return questions

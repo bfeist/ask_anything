@@ -14,6 +14,8 @@ interface IndexQuestion {
   question_start: number | null;
   question_end: number | null;
   answers: AnswerTiming[];
+  /** Concatenated answer text from all answer segments (may be empty string). */
+  answer_text?: string;
 }
 
 /** Metadata for the search index. */

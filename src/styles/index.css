@@ -426,6 +426,31 @@ body {
 }
 
 /* --------------------------------------------------------------------------
+   Video Answer Transcript
+   -------------------------------------------------------------------------- */
+
+.video-answer {
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.video-answer-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.video-answer-text {
+  margin: 0;
+  line-height: 1.6;
+  color: var(--fg);
+}
+
+/* --------------------------------------------------------------------------
    Video Questions List (in-video Q&A navigation)
    -------------------------------------------------------------------------- */
 
