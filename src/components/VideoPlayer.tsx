@@ -5,6 +5,7 @@ import { getQuestionsForVideo } from "@/lib/searchEngine";
 interface Props {
   result: SearchResult | null;
   onClose: () => void;
+  panelRef?: React.Ref<HTMLDivElement>;
 }
 
 function formatTime(seconds: number): string {
@@ -154,7 +155,7 @@ function VideoPlayerInner({
               }}
               type="button"
             >
-              ↻ Seek to Q
+              ↻ Seek to Question
             </button>
           )}
         </div>
@@ -173,7 +174,7 @@ function VideoPlayerInner({
               }}
               type="button"
             >
-              ↻ Seek to A
+              ↻ Seek to Answer
             </button>
           </div>
         )}
@@ -203,7 +204,11 @@ function VideoPlayerInner({
  * Outer wrapper: uses `key` on the video URL to force remount only when the
  * video file changes. Intra-video question navigation is handled internally.
  */
-export default function VideoPlayer({ result, onClose }: Props): React.JSX.Element | null {
+export default function VideoPlayer({ result, onClose, panelRef }: Props): React.JSX.Element | null {
   if (!result) return null;
-  return <VideoPlayerInner key={result.videoUrl} result={result} onClose={onClose} />;
+  return (
+    <div className="video-panel" ref={panelRef}>
+      <VideoPlayerInner key={result.videoUrl} result={result} onClose={onClose} />
+    </div>
+  );
 }

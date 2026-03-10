@@ -30,19 +30,24 @@ export default function VideoQuestionsList({
   const activeRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  const listRef = useRef<HTMLDivElement>(null);
+
   // Scroll the active question into view within the list container only
   useEffect(() => {
-    const item = activeRef.current;
-    const list = listRef.current;
-    if (!item || !list) return;
-    const itemTop = item.offsetTop;
-    const itemBottom = itemTop + item.offsetHeight;
-    const listTop = list.scrollTop;
-    const listBottom = listTop + list.clientHeight;
-    if (itemTop < listTop) {
-      list.scrollTop = itemTop;
-    } else if (itemBottom > listBottom) {
-      list.scrollTop = itemBottom - list.clientHeight;
+    const container = listRef.current;
+    const activeEl = activeRef.current;
+    if (!container || !activeEl) return;
+
+    const cRect = container.getBoundingClientRect();
+    const iRect = activeEl.getBoundingClientRect();
+
+    const relTop = iRect.top - cRect.top;
+    const relBottom = iRect.bottom - cRect.top;
+
+    if (relTop < 0) {
+      container.scrollTo({ top: container.scrollTop + relTop, behavior: "smooth" });
+    } else if (relBottom > container.clientHeight) {
+      container.scrollTo({ top: container.scrollTop + (relBottom - container.clientHeight), behavior: "smooth" });
     }
   }, [activeQuestionId]);
 
@@ -68,7 +73,7 @@ export default function VideoQuestionsList({
               <div className="vq-body">
                 <div className="vq-text">{q.text}</div>
                 <div className="vq-meta">
-                  <span className="vq-time">Q @ {formatTime(q.question_start)}</span>
+                  <span className="vq-time">{formatTime(q.question_start)}</span>
                   <span className="vq-event">{q.event_type.replace(/_/g, " ")}</span>
                 </div>
               </div>
