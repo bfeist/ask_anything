@@ -29,9 +29,25 @@ export default function VideoQuestionsList({
   const questions = useMemo(() => getQuestionsForVideo(sourceFile), [sourceFile]);
   const activeRef = useRef<HTMLButtonElement>(null);
 
-  // Scroll the active question into view on mount
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Scroll the active question into view within the list container only
   useEffect(() => {
-    activeRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const container = listRef.current;
+    const activeEl = activeRef.current;
+    if (!container || !activeEl) return;
+
+    const cRect = container.getBoundingClientRect();
+    const iRect = activeEl.getBoundingClientRect();
+
+    const relTop = iRect.top - cRect.top;
+    const relBottom = iRect.bottom - cRect.top;
+
+    if (relTop < 0) {
+      container.scrollTo({ top: container.scrollTop + relTop, behavior: "smooth" });
+    } else if (relBottom > container.clientHeight) {
+      container.scrollTo({ top: container.scrollTop + (relBottom - container.clientHeight), behavior: "smooth" });
+    }
   }, [activeQuestionId]);
 
   if (questions.length <= 1) {
@@ -41,7 +57,7 @@ export default function VideoQuestionsList({
   return (
     <div className="video-questions">
       <div className="video-questions-header">Questions in this video ({questions.length})</div>
-      <div className="video-questions-list">
+      <div className="video-questions-list" ref={listRef}>
         {questions.map((q, i) => {
           const isActive = q.id === activeQuestionId;
           return (
@@ -56,7 +72,7 @@ export default function VideoQuestionsList({
               <div className="vq-body">
                 <div className="vq-text">{q.text}</div>
                 <div className="vq-meta">
-                  <span className="vq-time">Q @ {formatTime(q.question_start)}</span>
+                  <span className="vq-time">{formatTime(q.question_start)}</span>
                   <span className="vq-event">{q.event_type.replace(/_/g, " ")}</span>
                 </div>
               </div>
