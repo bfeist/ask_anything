@@ -47,6 +47,19 @@ interface InitProgress {
   done?: boolean;
 }
 
+/** A single entry in video_dates.json. */
+interface VideoDateEntry {
+  /** ISO date string, e.g. "2019-12-02" */
+  date: string;
+  /** How the date was determined, e.g. "ia_file_mtime" */
+  source: string;
+  /** Internet Archive identifier */
+  identifier: string;
+}
+
+/** Map from .qa.json filename to date metadata. */
+type VideoDates = Record<string, VideoDateEntry>;
+
 /**
  * Thin callable type for the transformers.js feature-extraction pipeline.
  * Avoids the overly-complex union that pipeline()'s overloaded return type

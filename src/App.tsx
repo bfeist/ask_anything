@@ -15,6 +15,7 @@ import QuestionsTimeline from "@/components/QuestionsTimeline";
 import VideoPlayer from "@/components/VideoPlayer";
 import ThemeToggle from "@/components/ThemeToggle";
 import { init, search, isIndexLoaded, isModelLoaded } from "@/lib/searchEngine";
+import { useVideoDates } from "@/lib/useVideoDates";
 
 const HEADER_IMAGES = [
   headerImg1,
@@ -59,6 +60,7 @@ function App(): React.JSX.Element {
   const [statusMessages, setStatusMessages] = useState<InitProgress[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
   const [suggestedQuery, setSuggestedQuery] = useState<string | undefined>(undefined);
+  const videoDates = useVideoDates();
   const [currentImageIndex, setCurrentImageIndex] = useState(() =>
     Math.floor(Math.random() * HEADER_IMAGES.length)
   );
@@ -519,6 +521,7 @@ function App(): React.JSX.Element {
                   onSelectQuestionId={handleSelectFromTimeline}
                   startYear={2000}
                   endYear={2025}
+                  videoDates={videoDates}
                 />
               </div>
             )}

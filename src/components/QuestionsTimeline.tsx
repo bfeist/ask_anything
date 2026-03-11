@@ -8,6 +8,8 @@ interface Props {
   onSelectQuestionId?: (questionId: number) => void;
   startYear?: number;
   endYear?: number;
+  /** Real date metadata keyed by .qa.json filename. When provided, dots use actual dates. */
+  videoDates?: VideoDates | null;
 }
 
 function clamp01(v: number): number {
@@ -44,6 +46,7 @@ export default function QuestionsTimeline({
   onSelectQuestionId,
   startYear = 2000,
   endYear = 2025,
+  videoDates = null,
 }: Props): React.JSX.Element {
   const { dots, years } = useMemo(() => {
     const startMs = Date.UTC(startYear, 0, 1, 0, 0, 0);
@@ -51,10 +54,21 @@ export default function QuestionsTimeline({
     const endMs = Date.UTC(endYear, 11, 31, 23, 59, 59);
 
     const dots = questions.map((q) => {
-      const h = fnv1a32(`${seedKey}|${q.id}|${q.text}`);
-      const r = hashToUnitFloat(h);
-      const dateMs = startMs + Math.floor(r * (endMs - startMs));
-      const frac = yearFraction(dateMs, startMs, endMs);
+      let frac: number;
+
+      const qaKey = q.source_file.replace(/\.qa_text\.json$/, ".qa.json");
+      const entry = videoDates?.[qaKey];
+      if (entry?.date) {
+        const dateMs = Date.parse(entry.date);
+        frac = yearFraction(dateMs, startMs, endMs);
+      } else {
+        // Fall back to deterministic pseudo-random placement.
+        const h = fnv1a32(`${seedKey}|${q.id}|${q.text}`);
+        const r = hashToUnitFloat(h);
+        const dateMs = startMs + Math.floor(r * (endMs - startMs));
+        frac = yearFraction(dateMs, startMs, endMs);
+      }
+
       return { id: q.id, xPct: frac * 100, label: q.text };
     });
 
@@ -69,7 +83,7 @@ export default function QuestionsTimeline({
     }
 
     return { dots, years };
-  }, [questions, seedKey, startYear, endYear]);
+  }, [questions, seedKey, startYear, endYear, videoDates]);
 
   return (
     <div className="questions-timeline">

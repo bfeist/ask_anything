@@ -39,6 +39,36 @@ def append_seen(identifier: str) -> None:
         f.write(f"{identifier}\n")
 
 
+def rescan_stale_identifiers(
+    stale: set[str],
+    seen: set[str],
+) -> tuple[int, int]:
+    """Directly re-fetch metadata for identifiers known to have changed.
+
+    Returns (identifiers_rescanned, records_written).
+    """
+    total_rescanned = 0
+    total_written = 0
+    for ident in sorted(stale):
+        print(f"  Re-scanning {ident} ...", end=" ", flush=True)
+        metadata = fetch_item_metadata(ident)
+        if not metadata:
+            print("no metadata, skipping")
+            append_seen(ident)
+            seen.add(ident)
+            continue
+        records = build_records(ident, metadata)
+        for rec in records:
+            append_jsonl(IA_METADATA_JSONL, rec)
+            total_written += 1
+        print(f"{len(records)} record(s)")
+        append_seen(ident)
+        seen.add(ident)
+        total_rescanned += 1
+        time.sleep(0.3)
+    return total_rescanned, total_written
+
+
 def run_query(
     query: str,
     seen: set[str],
@@ -110,10 +140,35 @@ def main() -> None:
         action="store_true",
         help="Ignore seen-identifiers cache and reprocess all items",
     )
+    parser.add_argument(
+        "--rescan",
+        nargs="+",
+        metavar="IDENTIFIER",
+        help="Force rescan of specific IA identifier(s), replacing their existing records",
+    )
     args = parser.parse_args()
 
     ensure_directories()
     seen = load_seen_identifiers()
+
+    if args.rescan:
+        print("=" * 70)
+        print("STEP 1: Rescan specific identifiers")
+        print("=" * 70)
+        targets = set(args.rescan)
+        removed = remove_identifiers_from_jsonl(IA_METADATA_JSONL, targets)
+        print(f"Removed {removed} existing record(s) from metadata")
+        lines = IA_PROGRESS_FILE.read_text(encoding="utf-8").splitlines() if IA_PROGRESS_FILE.exists() else []
+        IA_PROGRESS_FILE.write_text(
+            "\n".join(l for l in lines if l.strip() not in targets) + "\n",
+            encoding="utf-8",
+        )
+        for ident in targets:
+            seen.discard(ident)
+        n_rescanned, n_written = rescan_stale_identifiers(targets, seen)
+        print(f"\nRescanned {n_rescanned} identifier(s), wrote {n_written} record(s)")
+        return
+
     if args.force:
         seen = set()
         if IA_METADATA_JSONL.exists():
@@ -129,6 +184,9 @@ def main() -> None:
     print("STEP 1: Scan IA Metadata")
     print("=" * 70)
     print(f"Seen identifiers: {len(seen)}")
+
+    total_new_ids = 0
+    total_written = 0
 
     # Automatically rescan identifiers that were updated on IA since the last run.
     if not args.force and seen and IA_PROGRESS_FILE.exists():
@@ -151,12 +209,12 @@ def main() -> None:
                 "\n".join(l for l in lines if l.strip() not in stale) + "\n",
                 encoding="utf-8",
             )
-            print(f"  Removed {removed} stale record(s) from metadata; will re-scan {len(stale)} identifier(s).")
+            print(f"  Removed {removed} stale record(s) from metadata; re-scanning {len(stale)} identifier(s) directly.")
+            n_rescanned, n_written = rescan_stale_identifiers(stale, seen)
+            total_new_ids += n_rescanned
+            total_written += n_written
         else:
             print("  No updated items found since last run.")
-
-    total_new_ids = 0
-    total_written = 0
 
     for query in queries:
         print(f"\nQuery: {query}")
