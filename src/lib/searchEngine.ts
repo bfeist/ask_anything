@@ -246,6 +246,11 @@ export function getQuestionCount(): number {
   return _meta?.num_questions ?? 0;
 }
 
+/** Return a shallow copy of all indexed questions, or an empty array if not yet loaded. */
+export function getAllQuestions(): IndexQuestion[] {
+  return _questions ? [..._questions] : [];
+}
+
 /**
  * Return all questions that belong to the same video (same `source_file`),
  * sorted by `question_start` ascending.

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faXmark } from "@fortawesome/free-solid-svg-icons";
+import { faXmark, faPlay, faPause } from "@fortawesome/free-solid-svg-icons";
 import VideoQuestionsList from "@/components/VideoQuestionsList";
 import { getQuestionsForVideo } from "@/lib/searchEngine";
 
@@ -29,10 +29,13 @@ function VideoPlayerInner({
   onClose: () => void;
 }): React.JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(false);
   const [activeQuestionId, setActiveQuestionId] = useState(result.question.id);
 
   // All questions for this video, sorted by question_start.
@@ -49,10 +52,28 @@ function VideoPlayerInner({
     setIsLoading(false);
     setError(null);
     const video = videoRef.current;
-    if (video && seekTarget > 0) {
+    if (!video) return;
+    if (seekTarget > 0) {
       video.currentTime = seekTarget;
     }
+    video.play().catch(() => {});
   }, [seekTarget]);
+
+  const handlePlayPause = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      video.play().catch(() => {});
+    } else {
+      video.pause();
+    }
+  }, []);
+
+  const handleScrub = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = Number(e.target.value);
+    }
+  }, []);
 
   const handleError = useCallback(() => {
     setIsLoading(false);
@@ -88,6 +109,23 @@ function VideoPlayerInner({
     }
   }, []);
 
+  const handlePlay = useCallback(() => setIsPaused(false), []);
+  const handlePause = useCallback(() => setIsPaused(true), []);
+
+  const handleContainerPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === "touch") {
+      setControlsVisible((visible) => {
+        if (visible) {
+          if (hideTimerRef.current !== null) clearTimeout(hideTimerRef.current);
+          return false;
+        }
+        if (hideTimerRef.current !== null) clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = setTimeout(() => setControlsVisible(false), 4000);
+        return true;
+      });
+    }
+  }, []);
+
   const handleSeekToQuestion = useCallback((question: IndexQuestion) => {
     const video = videoRef.current;
     if (video && question.question_start !== null) {
@@ -115,33 +153,52 @@ function VideoPlayerInner({
           <p className="video-error-hint">Video file: {result.videoUrl.split("/").pop()}</p>
         </div>
       ) : (
-        <div className="video-container">
+        <div
+          className={`video-container${controlsVisible ? " controls-visible" : ""}`}
+          onPointerDown={handleContainerPointerDown}
+        >
           {isLoading && <div className="video-loading">Loading video…</div>}
           <video
             ref={videoRef}
             className="video-element"
             src={result.videoUrl}
-            controls
             playsInline
             onLoadedData={handleLoaded}
             onError={handleError}
             onTimeUpdate={handleTimeUpdate}
             onDurationChange={handleDurationChange}
+            onPlay={handlePlay}
+            onPause={handlePause}
             preload="auto"
-            autoPlay={true}
           >
             <track kind="captions" />
           </video>
+          <div className="video-controls" onPointerDown={(e) => e.stopPropagation()}>
+            <button
+              className="video-play-btn"
+              onClick={handlePlayPause}
+              type="button"
+              aria-label={isPaused ? "Play" : "Pause"}
+            >
+              <FontAwesomeIcon icon={isPaused ? faPlay : faPause} />
+            </button>
+            <input
+              className="video-scrubber"
+              type="range"
+              min={0}
+              max={duration || 100}
+              value={currentTime}
+              step={0.5}
+              onChange={handleScrub}
+            />
+            <span className="video-time-display">
+              {formatTime(currentTime)} / {formatTime(duration)}
+            </span>
+          </div>
         </div>
       )}
 
       <div className="video-info">
-        <div className="video-info-row">
-          <span className="video-info-label">Current:</span>
-          <span>{formatTime(currentTime)}</span>
-          <span className="video-info-sep">/</span>
-          <span>{formatTime(duration)}</span>
-        </div>
         <div className="video-info-row">
           <span className="video-info-label">Question:</span>
           <span>

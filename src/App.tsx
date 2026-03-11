@@ -7,15 +7,19 @@ import headerImg4 from "@/images/STARLINER-NASA-ASTRONAUTS-ISS.png";
 import headerImg5 from "@/images/astronaut_with_fruit.jpg";
 import headerImg6 from "@/images/iss061e006682.webp";
 import headerImg7 from "@/images/wilmore-hague-williams.webp";
-import astronautSvg from "@/images/astronaut1.svg";
 import astronaut2Svg from "@/images/astronaut2.svg";
-import SearchInput from "@/components/SearchInput";
-import ResultsList from "@/components/ResultsList";
+import CommonQuestions from "@/components/CommonQuestions";
+import ConnectorSvg from "@/components/ConnectorSvg";
+import PlayerPlaceholder from "@/components/PlayerPlaceholder";
 import QuestionsTimeline from "@/components/QuestionsTimeline";
-import VideoPlayer from "@/components/VideoPlayer";
+import ResultsList from "@/components/ResultsList";
+import SearchInput from "@/components/SearchInput";
 import ThemeToggle from "@/components/ThemeToggle";
-import { init, search, isIndexLoaded, isModelLoaded } from "@/lib/searchEngine";
+import VideoPlayer from "@/components/VideoPlayer";
+import { init, search, isIndexLoaded, isModelLoaded, getAllQuestions } from "@/lib/searchEngine";
 import { useVideoDates } from "@/lib/useVideoDates";
+import { computeConnectorPath, type ConnectorGeometry } from "@/utils/connector";
+import { pickRandom } from "@/utils/pickRandom";
 
 const HEADER_IMAGES = [
   headerImg1,
@@ -59,20 +63,14 @@ function App(): React.JSX.Element {
   const [modelReady, setModelReady] = useState(false);
   const [statusMessages, setStatusMessages] = useState<InitProgress[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
+  const [allIndexQuestions, setAllIndexQuestions] = useState<IndexQuestion[]>([]);
   const [suggestedQuery, setSuggestedQuery] = useState<string | undefined>(undefined);
   const videoDates = useVideoDates();
   const [currentImageIndex, setCurrentImageIndex] = useState(() =>
     Math.floor(Math.random() * HEADER_IMAGES.length)
   );
 
-  const commonQuestions = useMemo(() => {
-    const pool = QUESTION_POOL.slice();
-    for (let i = 0; i < 6; i++) {
-      const j = i + Math.floor(Math.random() * (pool.length - i));
-      [pool[i], pool[j]] = [pool[j], pool[i]];
-    }
-    return pool.slice(0, 6);
-  }, []);
+  const commonQuestions = useMemo(() => pickRandom(QUESTION_POOL, 6), []);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -104,7 +102,7 @@ function App(): React.JSX.Element {
   const resultsScrollElRef = useRef<HTMLDivElement | null>(null);
   const videoPanelElRef = useRef<HTMLDivElement | null>(null);
 
-  const [connector, setConnector] = useState<{ w: number; h: number; d: string } | null>(null);
+  const [connector, setConnector] = useState<ConnectorGeometry | null>(null);
 
   // Track the latest search request to avoid stale results
   const searchIdRef = useRef(0);
@@ -119,7 +117,10 @@ function App(): React.JSX.Element {
 
     const onProgress = (p: InitProgress) => {
       setStatusMessages((prev) => [...prev, p]);
-      if (p.stage === "index" && p.done) setIndexReady(true);
+      if (p.stage === "index" && p.done) {
+        setIndexReady(true);
+        setAllIndexQuestions(getAllQuestions());
+      }
       if (p.stage === "model" && p.done) setModelReady(true);
     };
 
@@ -239,6 +240,103 @@ function App(): React.JSX.Element {
     }
   }, []);
 
+  // Animate compact → hero (reverse of animateHeroToCompact) ------------------
+  // Called synchronously in handleClearInput, before React's batched render
+  // adds app-header--hero back, so we can measure the compact height first.
+  // GSAP inline styles override the CSS class values until clearProps is called.
+  const animateCompactToHero = useCallback(() => {
+    const header = headerRef.current;
+    if (!header) return;
+
+    const heroTitleEl = header.querySelector(".app-title--hero") as HTMLElement | null;
+    const compactTitleEl = header.querySelector(".app-title--compact") as HTMLElement | null;
+    const subtitleEl = header.querySelector(".app-subtitle") as HTMLElement | null;
+    // Target the full row (icons + text) so astronaut icon is also covered.
+    const headerTextEl = header.querySelector(".app-header-text") as HTMLElement | null;
+    const inputEl = mainRef.current?.querySelector(".search-input") as HTMLElement | null;
+
+    [header, heroTitleEl, compactTitleEl, subtitleEl, headerTextEl, inputEl].forEach((el) => {
+      if (el) gsap.killTweensOf(el);
+    });
+
+    // Hide synchronously BEFORE clearing individual inline styles.
+    // React's setHasSearched(false) batches and re-renders after this handler
+    // returns, so app-header--hero gets added back while headerTextEl is already
+    // opacity:0 — preventing the instantaneous title-size snap from being visible.
+    if (headerTextEl) gsap.set(headerTextEl, { opacity: 0 });
+
+    // Now safe to clear per-element inline styles; everything is hidden above.
+    if (heroTitleEl) gsap.set(heroTitleEl, { clearProps: "all" });
+    if (compactTitleEl) gsap.set(compactTitleEl, { clearProps: "all" });
+    if (subtitleEl) gsap.set(subtitleEl, { clearProps: "all" });
+
+    const compactH = header.offsetHeight;
+
+    // Temporarily add hero class to measure its height
+    header.classList.add("app-header--hero");
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    header.offsetHeight; // force reflow
+    const heroH = header.offsetHeight;
+    header.classList.remove("app-header--hero");
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    header.offsetHeight; // force reflow
+
+    // Lock at compact height so the GSAP tween controls it while React
+    // re-renders (adding app-header--hero back).
+    gsap.set(header, { height: compactH });
+
+    const tl = gsap.timeline();
+
+    // Expand header height + grow input simultaneously.
+    tl.to(header, {
+      height: heroH,
+      duration: 2,
+      ease: "power3.inOut",
+      onComplete: () => {
+        gsap.set(header, { clearProps: "height" });
+      },
+    });
+
+    if (inputEl) {
+      tl.fromTo(
+        inputEl,
+        { fontSize: 20, paddingTop: 16, paddingBottom: 16, paddingLeft: 28, paddingRight: 44 },
+        {
+          fontSize: 23,
+          paddingTop: 18,
+          paddingBottom: 18,
+          paddingLeft: 22,
+          paddingRight: 52,
+          duration: 2,
+          ease: "power3.inOut",
+          onComplete: () => {
+            gsap.set(inputEl, { clearProps: "all" });
+          },
+        },
+        "<" // same time as header expansion
+      );
+    }
+
+    // Fade the text+icon block back in near the end of the expansion.
+    // By this point React has re-rendered with app-header--hero, so CSS
+    // shows the hero title / hero icon automatically.
+    if (headerTextEl) {
+      tl.to(
+        headerTextEl,
+        {
+          opacity: 1,
+          duration: 1,
+          ease: "power1.out",
+          onComplete: () => {
+            gsap.set(headerTextEl, { clearProps: "opacity" });
+          },
+        },
+        "-=0.8"
+      );
+    }
+  }, []);
+  // ---------------------------------------------------------------------------
+
   // Fade + lift the content panels once they mount after hasSearched flips
   useEffect(() => {
     if (!hasSearched) return;
@@ -306,24 +404,24 @@ function App(): React.JSX.Element {
     }
   }, [indexReady, modelReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Scroll so the search input sits at the very top of the viewport.
-  const scrollToSearchInput = useCallback(() => {
-    // Use setTimeout to ensure the DOM has updated (e.g. video player rendered)
-    // so the page is tall enough to scroll.
-    setTimeout(() => {
-      const el = mainRef.current?.querySelector(".search-input") as HTMLElement | null;
-      if (!el) return;
-      const top = el.getBoundingClientRect().top + window.scrollY - 8;
-      window.scrollTo({ top, behavior: "smooth" });
-    }, 50);
+  const scrollToSearchInputOnMobile = useCallback(() => {
+    if (window.matchMedia("(pointer: coarse)").matches) {
+      // Only auto-scroll on mobile where the on-screen keyboard may cover the input
+      setTimeout(() => {
+        const el = mainRef.current?.querySelector(".search-input") as HTMLElement | null;
+        if (!el) return;
+        const top = el.getBoundingClientRect().top + window.scrollY - 8;
+        window.scrollTo({ top, behavior: "smooth" });
+      }, 50);
+    }
   }, []);
 
   const handleSelect = useCallback(
     (result: SearchResult) => {
       setSelectedResult(result);
-      scrollToSearchInput();
+      scrollToSearchInputOnMobile();
     },
-    [scrollToSearchInput]
+    [scrollToSearchInputOnMobile]
   );
 
   const handleSelectFromTimeline = useCallback(
@@ -331,15 +429,28 @@ function App(): React.JSX.Element {
       const match = results.find((r) => r.question.id === questionId) ?? null;
       if (match) {
         setSelectedResult(match);
-        scrollToSearchInput();
+        scrollToSearchInputOnMobile();
       }
     },
-    [results, scrollToSearchInput]
+    [results, scrollToSearchInputOnMobile]
   );
 
   const handleCloseVideo = useCallback(() => {
     setSelectedResult(null);
   }, []);
+
+  const handleClearInput = useCallback(() => {
+    // Run the animation synchronously first — the DOM is still in compact state
+    // because React batches all the setState calls below into a single render
+    // that fires after this handler completes.
+    animateCompactToHero();
+    hasSearchedRef.current = false;
+    setHasSearched(false);
+    setResults([]);
+    setSelectedResult(null);
+    setQuery("");
+    setSuggestedQuery(undefined);
+  }, [animateCompactToHero]);
 
   const engineReady = indexReady && modelReady;
 
@@ -353,40 +464,13 @@ function App(): React.JSX.Element {
       return;
     }
 
-    const mainRect = main.getBoundingClientRect();
-    const leftRect = left.getBoundingClientRect();
-    const rightRect = right.getBoundingClientRect();
-
-    const w = Math.max(1, Math.round(mainRect.width));
-    const h = Math.max(1, Math.round(mainRect.height));
-
-    const leftY = leftRect.top + Math.min(32, leftRect.height / 2);
-    const rightY = rightRect.top + Math.min(32, rightRect.height / 2);
-
-    const x1 = leftRect.right - mainRect.left + 1;
-    const y1 = leftY - mainRect.top;
-    const x2 = rightRect.left - mainRect.left - 1;
-    const y2 = rightY - mainRect.top;
-
-    const midX = (x1 + x2) / 2;
-
-    const baseRadius = 18;
-    const dx = Math.abs(x2 - x1);
-    const dy = Math.abs(y2 - y1);
-    const radius = Math.max(0, Math.min(baseRadius, dx / 4, dy / 2));
-    const dir = y2 >= y1 ? 1 : -1;
-
-    const d =
-      radius > 0
-        ? `M ${x1} ${y1} ` +
-          `L ${midX - radius} ${y1} ` +
-          `Q ${midX} ${y1} ${midX} ${y1 + dir * radius} ` +
-          `L ${midX} ${y2 - dir * radius} ` +
-          `Q ${midX} ${y2} ${midX + radius} ${y2} ` +
-          `L ${x2} ${y2}`
-        : `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`;
-
-    setConnector({ w, h, d });
+    setConnector(
+      computeConnectorPath(
+        main.getBoundingClientRect(),
+        left.getBoundingClientRect(),
+        right.getBoundingClientRect()
+      )
+    );
   }, []);
 
   const handleSelectedElementChange = useCallback(
@@ -484,6 +568,7 @@ function App(): React.JSX.Element {
             <SearchInput
               onSearch={handleSearch}
               onFirstInput={handleFirstInput}
+              onClear={handleClearInput}
               disabled={!engineReady}
               placeholder="Ask your question..."
               statusText={
@@ -495,27 +580,14 @@ function App(): React.JSX.Element {
             />
 
             {!hasSearched && engineReady && (
-              <div className="common-questions">
-                <p className="common-questions-label">Common Questions:</p>
-                <div className="common-questions-grid">
-                  {commonQuestions.map((q) => (
-                    <button
-                      key={q}
-                      className="common-question-pill"
-                      onClick={() => setSuggestedQuery(q)}
-                      type="button"
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <CommonQuestions questions={commonQuestions} onSelect={setSuggestedQuery} />
             )}
 
             {hasSearched && (
               <div ref={timelineRowRef}>
                 <QuestionsTimeline
                   questions={timelineQuestions}
+                  allQuestions={allIndexQuestions}
                   activeQuestionId={selectedResult?.question.id ?? null}
                   seedKey={query || "(empty)"}
                   onSelectQuestionId={handleSelectFromTimeline}
@@ -550,31 +622,12 @@ function App(): React.JSX.Element {
                   panelRef={videoPanelElRef}
                 />
               ) : (
-                <div className="player-placeholder">
-                  <div className="placeholder-content">
-                    <div className="astronaut-svg-container">
-                      <img
-                        src={astronautSvg}
-                        alt="Astronaut illustration"
-                        className="astronaut-svg"
-                      />
-                    </div>
-                    <p>Select a question to watch the response</p>
-                  </div>
-                </div>
+                <PlayerPlaceholder />
               )}
             </div>
           )}
 
-          {connector && hasSelection && (
-            <svg
-              className="selection-connector"
-              viewBox={`0 0 ${connector.w} ${connector.h}`}
-              aria-hidden="true"
-            >
-              <path d={connector.d} />
-            </svg>
-          )}
+          {connector && hasSelection && <ConnectorSvg connector={connector} />}
         </main>
       </div>
     </div>

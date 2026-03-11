@@ -1028,20 +1028,29 @@ body {
 .qt-dot {
   position: absolute;
   top: 50%;
-  width: 12px;
-  height: 12px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
-  background: rgb(255 255 255);
-  border: 2px solid rgb(255 255 255 / 17.1%);
+  background: rgb(140 140 150 / 55%);
+  border: 1px solid rgb(180 180 190 / 30%);
   transform: translate(-50%, -50%);
-  z-index: 1;
+  z-index: 0;
   padding: 0;
-  cursor: pointer;
+  cursor: default;
 }
 
 .qt-dot:focus-visible {
   outline: 2px solid var(--fg);
   outline-offset: 2px;
+}
+
+.qt-dot--result {
+  width: 12px;
+  height: 12px;
+  background: rgb(255 255 255);
+  border: 2px solid rgb(255 255 255 / 17.1%);
+  z-index: 1;
+  cursor: pointer;
 }
 
 .qt-dot--active {
@@ -1051,6 +1060,7 @@ body {
   border: 2px solid rgb(0 132 255 / 37.7%);
   box-shadow: 0 0 0 3px rgb(0 140 255 / 31.5%);
   z-index: 2;
+  cursor: pointer;
 }
 
 .video-header {
@@ -1118,6 +1128,61 @@ body {
   height: 100%;
   display: block;
   border-radius: 10px;
+}
+
+.video-controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 12px 10px;
+  background: linear-gradient(transparent, rgb(0 0 0 / 65%));
+  border-radius: 0 0 10px 10px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.video-container.controls-visible .video-controls {
+  opacity: 1;
+}
+
+@media (hover: hover) {
+  .video-container:hover .video-controls {
+    opacity: 1;
+  }
+}
+
+.video-play-btn {
+  background: none;
+  border: none;
+  color: #ffffff;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 6px;
+  line-height: 1;
+  flex-shrink: 0;
+  min-width: 32px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-scrubber {
+  flex: 1;
+  height: 4px;
+  cursor: pointer;
+  accent-color: #ffffff;
+}
+
+.video-time-display {
+  color: #ffffff;
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .video-loading {
@@ -1485,6 +1550,11 @@ body {
 }
 
 :root[data-theme="light"] .qt-dot {
+  background: rgb(100 100 110 / 35%);
+  border-color: rgb(80 80 90 / 20%);
+}
+
+:root[data-theme="light"] .qt-dot--result {
   background: var(--fg);
   border-color: rgb(0 0 0 / 10%);
 }

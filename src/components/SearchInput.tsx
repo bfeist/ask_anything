@@ -5,6 +5,7 @@ import { faXmark } from "@fortawesome/free-solid-svg-icons";
 interface Props {
   onSearch: (query: string) => void;
   onFirstInput?: () => void;
+  onClear?: () => void;
   disabled?: boolean;
   placeholder?: string;
   statusText?: string;
@@ -17,6 +18,7 @@ interface Props {
 export default function SearchInput({
   onSearch,
   onFirstInput,
+  onClear,
   disabled = false,
   placeholder = "Ask anything…",
   statusText,
@@ -67,7 +69,9 @@ export default function SearchInput({
 
   const handleClear = () => {
     setValue("");
+    firstInputFiredRef.current = false;
     onSearch("");
+    onClear?.();
   };
 
   const handleBlur = () => {
