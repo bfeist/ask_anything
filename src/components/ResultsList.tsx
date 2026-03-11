@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
+import styles from "./ResultsList.module.css";
 
 interface Props {
   results: SearchResult[];
@@ -56,19 +57,21 @@ export default function ResultsList({
   }, [selectedId, results, onSelectedElementChange]);
 
   if (!query) {
-    return <div className="results-empty">Enter a search query to find matching questions.</div>;
+    return (
+      <div className={styles.resultsEmpty}>Enter a search query to find matching questions.</div>
+    );
   }
 
   if (isSearching) {
-    return <div className="results-empty">Searching…</div>;
+    return <div className={styles.resultsEmpty}>Searching…</div>;
   }
 
   if (results.length === 0 && query.length > 0) {
-    return <div className="results-empty">No matching questions found.</div>;
+    return <div className={styles.resultsEmpty}>No matching questions found.</div>;
   }
 
   return (
-    <div className="results-list" ref={listRef}>
+    <div className={styles.resultsList} ref={listRef}>
       {results.map((r, i) => (
         <button
           key={r.question.id}
@@ -76,19 +79,19 @@ export default function ResultsList({
             if (el) itemRefs.current.set(r.question.id, el);
             else itemRefs.current.delete(r.question.id);
           }}
-          className={`result-item ${selectedId === r.question.id ? "result-item-selected" : ""}`}
+          className={`${styles.resultItem} ${selectedId === r.question.id ? styles.resultItemSelected : ""}`}
           onClick={() => onSelect(r)}
           type="button"
         >
-          <div className="result-rank">{i + 1}</div>
-          <div className="result-body">
-            <div className="result-text">{r.question.text}</div>
-            <div className="result-meta">
-              <span className="result-score" title={`Similarity: ${r.score.toFixed(3)}`}>
+          <div className={styles.resultRank}>{i + 1}</div>
+          <div className={styles.resultBody}>
+            <div className={styles.resultText}>{r.question.text}</div>
+            <div className={styles.resultMeta}>
+              <span className={styles.resultScore} title={`Similarity: ${r.score.toFixed(3)}`}>
                 {scoreBar(r.score)} {(r.score * 100).toFixed(1)}%
               </span>
-              <span className="result-event">{r.question.event_type.replace(/_/g, " ")}</span>
-              <span className="result-time">{formatTime(r.question.question_start)}</span>
+              <span className={styles.resultEvent}>{r.question.event_type.replace(/_/g, " ")}</span>
+              <span>{formatTime(r.question.question_start)}</span>
             </div>
           </div>
         </button>

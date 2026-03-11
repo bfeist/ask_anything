@@ -20,6 +20,7 @@ import { init, search, isIndexLoaded, isModelLoaded, getAllQuestions } from "@/l
 import { useVideoDates } from "@/lib/useVideoDates";
 import { computeConnectorPath, type ConnectorGeometry } from "@/utils/connector";
 import { pickRandom } from "@/utils/pickRandom";
+import styles from "./App.module.css";
 
 const HEADER_IMAGES = [
   headerImg1,
@@ -145,21 +146,21 @@ function App(): React.JSX.Element {
 
     // Lock the hero title's font-size as an inline style BEFORE we touch any classes,
     // so the measurement step and React re-render can't collapse it.
-    const heroTitleEl = header.querySelector(".app-title--hero") as HTMLElement | null;
-    const compactTitleEl = header.querySelector(".app-title--compact") as HTMLElement | null;
+    const heroTitleEl = header.querySelector(`.${styles.appTitleHero}`) as HTMLElement | null;
+    const compactTitleEl = header.querySelector(`.${styles.appTitleCompact}`) as HTMLElement | null;
     if (heroTitleEl) {
       const heroFontSize = parseFloat(getComputedStyle(heroTitleEl).fontSize);
       gsap.set(heroTitleEl, { fontSize: heroFontSize, letterSpacing: "-1.5px" });
     }
 
     // Temporarily remove the hero class to measure compact height
-    header.classList.remove("app-header--hero");
+    header.classList.remove(styles.appHeaderHero);
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions
     header.offsetHeight; // force reflow
     const compactH = header.offsetHeight;
 
     // Restore + lock the hero height so GSAP can tween from it
-    header.classList.add("app-header--hero");
+    header.classList.add(styles.appHeaderHero);
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions
     header.offsetHeight; // force reflow
     gsap.set(header, { height: heroH });
@@ -169,16 +170,16 @@ function App(): React.JSX.Element {
       duration: 2,
       ease: "power3.inOut",
       onComplete: () => {
-        header.classList.remove("app-header--hero");
+        header.classList.remove(styles.appHeaderHero);
         gsap.set(header, { clearProps: "height" });
       },
     });
 
     // Shrink the search input from hero size down to compact size.
     // Use fromTo so GSAP owns the values regardless of when React re-renders.
-    // Values must match the CSS for .app-main--hero .search-input (from) and
-    // .search-input (to) so clearProps doesn't cause a visual jump.
-    const inputEl = mainRef.current?.querySelector(".search-input") as HTMLElement | null;
+    // Values must match the CSS for .searchInputHero (from) and
+    // .searchInput (to) so clearProps doesn't cause a visual jump.
+    const inputEl = mainRef.current?.querySelector("[data-search-input]") as HTMLElement | null;
     if (inputEl) {
       gsap.fromTo(
         inputEl,
@@ -221,7 +222,7 @@ function App(): React.JSX.Element {
     }
 
     // Fade subtitle in from invisible, same timing as the compact title.
-    const subtitleEl = header.querySelector(".app-subtitle") as HTMLElement | null;
+    const subtitleEl = header.querySelector(`.${styles.appSubtitle}`) as HTMLElement | null;
     if (subtitleEl) {
       gsap.set(subtitleEl, { opacity: 0 });
       gsap.fromTo(
@@ -248,12 +249,12 @@ function App(): React.JSX.Element {
     const header = headerRef.current;
     if (!header) return;
 
-    const heroTitleEl = header.querySelector(".app-title--hero") as HTMLElement | null;
-    const compactTitleEl = header.querySelector(".app-title--compact") as HTMLElement | null;
-    const subtitleEl = header.querySelector(".app-subtitle") as HTMLElement | null;
+    const heroTitleEl = header.querySelector(`.${styles.appTitleHero}`) as HTMLElement | null;
+    const compactTitleEl = header.querySelector(`.${styles.appTitleCompact}`) as HTMLElement | null;
+    const subtitleEl = header.querySelector(`.${styles.appSubtitle}`) as HTMLElement | null;
     // Target the full row (icons + text) so astronaut icon is also covered.
-    const headerTextEl = header.querySelector(".app-header-text") as HTMLElement | null;
-    const inputEl = mainRef.current?.querySelector(".search-input") as HTMLElement | null;
+    const headerTextEl = header.querySelector(`.${styles.appHeaderText}`) as HTMLElement | null;
+    const inputEl = mainRef.current?.querySelector("[data-search-input]") as HTMLElement | null;
 
     [header, heroTitleEl, compactTitleEl, subtitleEl, headerTextEl, inputEl].forEach((el) => {
       if (el) gsap.killTweensOf(el);
@@ -273,11 +274,11 @@ function App(): React.JSX.Element {
     const compactH = header.offsetHeight;
 
     // Temporarily add hero class to measure its height
-    header.classList.add("app-header--hero");
+    header.classList.add(styles.appHeaderHero);
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions
     header.offsetHeight; // force reflow
     const heroH = header.offsetHeight;
-    header.classList.remove("app-header--hero");
+    header.classList.remove(styles.appHeaderHero);
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions
     header.offsetHeight; // force reflow
 
@@ -408,7 +409,7 @@ function App(): React.JSX.Element {
     if (window.matchMedia("(pointer: coarse)").matches) {
       // Only auto-scroll on mobile where the on-screen keyboard may cover the input
       setTimeout(() => {
-        const el = mainRef.current?.querySelector(".search-input") as HTMLElement | null;
+        const el = mainRef.current?.querySelector("[data-search-input]") as HTMLElement | null;
         if (!el) return;
         const top = el.getBoundingClientRect().top + window.scrollY - 8;
         window.scrollTo({ top, behavior: "smooth" });
@@ -527,30 +528,43 @@ function App(): React.JSX.Element {
   const timelineQuestions = useMemo(() => results.map((r) => r.question), [results]);
 
   return (
-    <div className="app-root">
-      <header ref={headerRef} className={`app-header${hasSearched ? "" : " app-header--hero"}`}>
+    <div className={styles.appRoot}>
+      <header
+        ref={headerRef}
+        className={`${styles.appHeader}${hasSearched ? "" : ` ${styles.appHeaderHero}`}`}
+      >
         {HEADER_IMAGES.map((img, index) => (
           <div
             key={img}
-            className="app-header-bg"
+            className={styles.appHeaderBg}
             style={{
               backgroundImage: `url(${img})`,
               opacity: index === currentImageIndex ? 0.7 : 0,
             }}
           />
         ))}
-        <div className="app-header-inner">
-          <div className="app-header-text">
-            <img src={astronaut2Svg} alt="" className="app-title-icon app-title-icon--hero" />
-            <img src={astronaut2Svg} alt="" className="app-title-icon app-title-icon--compact" />
-            <div className="app-header-text-content">
-              <div className="app-title-wrap">
-                <h1 className="app-title app-title--hero">Ask an Astronaut Anything</h1>
-                <h1 className="app-title app-title--compact" aria-hidden="true">
+        <div className={styles.appHeaderInner}>
+          <div className={styles.appHeaderText}>
+            <img
+              src={astronaut2Svg}
+              alt=""
+              className={`${styles.appTitleIcon} ${styles.appTitleIconHero}`}
+            />
+            <img
+              src={astronaut2Svg}
+              alt=""
+              className={`${styles.appTitleIcon} ${styles.appTitleIconCompact}`}
+            />
+            <div className={styles.appHeaderTextContent}>
+              <div className={styles.appTitleWrap}>
+                <h1 className={`${styles.appTitle} ${styles.appTitleHero}`}>
+                  Ask an Astronaut Anything
+                </h1>
+                <h1 className={`${styles.appTitle} ${styles.appTitleCompact}`} aria-hidden="true">
                   Ask an Astronaut Anything
                 </h1>
               </div>
-              <p className="app-subtitle">
+              <p className={styles.appSubtitle}>
                 Search across astronaut Q&amp;A recordings onboard the International Space Station
               </p>
             </div>
@@ -559,18 +573,19 @@ function App(): React.JSX.Element {
         </div>
       </header>
 
-      <div className="app">
+      <div className={styles.app}>
         <main
-          className={`app-main${hasSelection ? " app-main--has-selection" : ""}${hasSearched ? "" : " app-main--hero"}`}
+          className={`${styles.appMain}${hasSearched ? "" : ` ${styles.appMainHero}`}`}
           ref={mainRef}
         >
-          <div className="search-row">
+          <div className={styles.searchRow}>
             <SearchInput
               onSearch={handleSearch}
               onFirstInput={handleFirstInput}
               onClear={handleClearInput}
               disabled={!engineReady}
               placeholder="Ask your question..."
+              hero={!hasSearched}
               statusText={
                 !engineReady
                   ? (statusMessages[statusMessages.length - 1]?.message ?? "Initialising…")
@@ -600,7 +615,7 @@ function App(): React.JSX.Element {
           </div>
 
           {hasSearched && (
-            <div className="results-panel" ref={resultsPanelRef}>
+            <div className={styles.resultsPanel} ref={resultsPanelRef}>
               <ResultsList
                 results={results}
                 onSelect={handleSelect}
@@ -614,7 +629,7 @@ function App(): React.JSX.Element {
           )}
 
           {hasSearched && (
-            <div className="player-panel" ref={playerPanelRef}>
+            <div className={styles.playerPanel} ref={playerPanelRef}>
               {selectedResult ? (
                 <VideoPlayer
                   result={selectedResult}

@@ -1,0 +1,229 @@
+/* ==========================================================================
+   VideoPlayer
+   ========================================================================== */
+
+.videoPanel {
+  position: relative;
+  border: 1px solid var(--result-border);
+  background: var(--result-bg);
+  backdrop-filter: blur(80px);
+  padding: 20px;
+  z-index: 2;
+  border-radius: 12px;
+  box-shadow:
+    0 20px 50px rgb(0 0 0 / 70%),
+    inset 0 0 20px rgb(255 255 255 / 2%);
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.videoPlayer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.videoHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 8px;
+}
+
+.videoQuestionText {
+  flex: 1;
+  font-size: 18px;
+  line-height: 1.4;
+  color: var(--fg);
+}
+
+.videoClose {
+  background: none;
+  border: 2px solid rgb(150 150 150);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--fg);
+  border-radius: 10px;
+}
+
+.videoClose:hover {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.videoContainer {
+  position: relative;
+  background: #000000;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.videoElement {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 10px;
+}
+
+.videoControls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 12px 10px;
+  background: linear-gradient(transparent, rgb(0 0 0 / 65%));
+  border-radius: 0 0 10px 10px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.videoContainer.controlsVisible .videoControls {
+  opacity: 1;
+}
+
+@media (hover: hover) {
+  .videoContainer:hover .videoControls {
+    opacity: 1;
+  }
+}
+
+.videoPlayBtn {
+  background: none;
+  border: none;
+  color: #ffffff;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 6px;
+  line-height: 1;
+  flex-shrink: 0;
+  min-width: 32px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.videoScrubber {
+  flex: 1;
+  height: 4px;
+  cursor: pointer;
+  accent-color: #ffffff;
+}
+
+.videoTimeDisplay {
+  color: #ffffff;
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.videoLoading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #cccccc;
+  font-size: 14px;
+  z-index: 1;
+}
+
+.videoError {
+  padding: 24px;
+  border: 2px solid var(--border-strong);
+  background: var(--bg-muted);
+  font-size: 13px;
+}
+
+.videoErrorHint {
+  color: var(--text-muted);
+  font-size: 11px;
+  word-break: break-all;
+  margin-top: 8px;
+}
+
+.videoInfo {
+  font-size: 12px;
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.videoInfoRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--fg);
+}
+
+.videoInfoLabel {
+  font-weight: 600;
+  min-width: 80px;
+  color: var(--fg);
+}
+
+.videoSeekBtn {
+  background: rgb(255 255 255 / 16.4%);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 3px 10px;
+  color: var(--fg);
+  margin-left: 0;
+  width: 155px;
+  text-align: left;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+
+.videoSeekBtn:hover {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+/* --------------------------------------------------------------------------
+   Video Answer Transcript
+   -------------------------------------------------------------------------- */
+
+.videoAnswer {
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.videoAnswerLabel {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.videoAnswerText {
+  margin: 0;
+  line-height: 1.6;
+  color: var(--fg);
+}
+
+/* --------------------------------------------------------------------------
+   Light Theme
+   -------------------------------------------------------------------------- */
+
+:global(:root[data-theme="light"]) .videoPanel {
+  box-shadow: 0 4px 24px rgb(0 0 0 / 8%);
+}

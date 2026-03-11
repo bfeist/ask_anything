@@ -1,0 +1,64 @@
+/* ==========================================================================
+   PlayerPlaceholder
+   ========================================================================== */
+
+@keyframes floatSvg {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+
+  50% {
+    transform: translateY(-10px) rotate(1deg);
+  }
+}
+
+.playerPlaceholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 480px;
+  border: 1px dashed var(--placeholder-border);
+  font-size: 14px;
+  border-radius: 12px;
+  text-align: center;
+}
+
+.placeholderContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.astronautSvgContainer {
+  width: 350px;
+  height: 350px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: floatSvg 4s ease-in-out infinite;
+  transition: all 0.5s ease;
+  filter: grayscale(0.8) opacity(0.5);
+}
+
+.astronautSvg {
+  width: 100%;
+  height: 100%;
+}
+
+.playerPlaceholder .astronautSvgContainer {
+  filter: grayscale(0) opacity(0.6) drop-shadow(0 0 15px rgb(42 187 255 / 89%));
+}
+
+/* --------------------------------------------------------------------------
+   Light Theme
+   -------------------------------------------------------------------------- */
+
+:global(:root[data-theme="light"]) .astronautSvgContainer {
+  filter: invert(1) grayscale(0.8) opacity(0.4);
+}
+
+:global(:root[data-theme="light"]) .playerPlaceholder .astronautSvgContainer {
+  filter: invert(1) grayscale(0) opacity(0.5) drop-shadow(0 0 15px rgb(0 113 227 / 50%));
+}

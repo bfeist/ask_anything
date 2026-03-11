@@ -3,6 +3,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faXmark, faPlay, faPause } from "@fortawesome/free-solid-svg-icons";
 import VideoQuestionsList from "@/components/VideoQuestionsList";
 import { getQuestionsForVideo } from "@/lib/searchEngine";
+import styles from "./VideoPlayer.module.css";
 
 interface Props {
   result: SearchResult | null;
@@ -139,28 +140,28 @@ function VideoPlayerInner({
   const firstAnswer = q.answers[0];
 
   return (
-    <div className="video-player">
-      <div className="video-header">
-        <div className="video-question-text">{q.text}</div>
-        <button className="video-close" onClick={onClose} type="button" aria-label="Close">
+    <div className={styles.videoPlayer}>
+      <div className={styles.videoHeader}>
+        <div className={styles.videoQuestionText}>{q.text}</div>
+        <button className={styles.videoClose} onClick={onClose} type="button" aria-label="Close">
           <FontAwesomeIcon icon={faXmark} />
         </button>
       </div>
 
       {error ? (
-        <div className="video-error">
+        <div className={styles.videoError}>
           <p>{error}</p>
-          <p className="video-error-hint">Video file: {result.videoUrl.split("/").pop()}</p>
+          <p className={styles.videoErrorHint}>Video file: {result.videoUrl.split("/").pop()}</p>
         </div>
       ) : (
         <div
-          className={`video-container${controlsVisible ? " controls-visible" : ""}`}
+          className={`${styles.videoContainer}${controlsVisible ? ` ${styles.controlsVisible}` : ""}`}
           onPointerDown={handleContainerPointerDown}
         >
-          {isLoading && <div className="video-loading">Loading video…</div>}
+          {isLoading && <div className={styles.videoLoading}>Loading video…</div>}
           <video
             ref={videoRef}
-            className="video-element"
+            className={styles.videoElement}
             src={result.videoUrl}
             playsInline
             onLoadedData={handleLoaded}
@@ -173,9 +174,9 @@ function VideoPlayerInner({
           >
             <track kind="captions" />
           </video>
-          <div className="video-controls" onPointerDown={(e) => e.stopPropagation()}>
+          <div className={styles.videoControls} onPointerDown={(e) => e.stopPropagation()}>
             <button
-              className="video-play-btn"
+              className={styles.videoPlayBtn}
               onClick={handlePlayPause}
               type="button"
               aria-label={isPaused ? "Play" : "Pause"}
@@ -183,7 +184,7 @@ function VideoPlayerInner({
               <FontAwesomeIcon icon={isPaused ? faPlay : faPause} />
             </button>
             <input
-              className="video-scrubber"
+              className={styles.videoScrubber}
               type="range"
               min={0}
               max={duration || 100}
@@ -191,22 +192,22 @@ function VideoPlayerInner({
               step={0.5}
               onChange={handleScrub}
             />
-            <span className="video-time-display">
+            <span className={styles.videoTimeDisplay}>
               {formatTime(currentTime)} / {formatTime(duration)}
             </span>
           </div>
         </div>
       )}
 
-      <div className="video-info">
-        <div className="video-info-row">
-          <span className="video-info-label">Question:</span>
+      <div className={styles.videoInfo}>
+        <div className={styles.videoInfoRow}>
+          <span className={styles.videoInfoLabel}>Question:</span>
           <span>
             {formatTime(q.question_start ?? 0)} – {formatTime(q.question_end ?? 0)}
           </span>
           {q.question_start !== null && (
             <button
-              className="video-seek-btn"
+              className={styles.videoSeekBtn}
               onClick={() => {
                 if (videoRef.current && q.question_start !== null) {
                   videoRef.current.currentTime = q.question_start;
@@ -219,13 +220,13 @@ function VideoPlayerInner({
           )}
         </div>
         {hasAnswers && (
-          <div className="video-info-row">
-            <span className="video-info-label">Answer:</span>
+          <div className={styles.videoInfoRow}>
+            <span className={styles.videoInfoLabel}>Answer:</span>
             <span>
               {formatTime(firstAnswer.start)} – {formatTime(firstAnswer.end)}
             </span>
             <button
-              className="video-seek-btn"
+              className={styles.videoSeekBtn}
               onClick={() => {
                 if (videoRef.current) {
                   videoRef.current.currentTime = firstAnswer.start;
@@ -237,16 +238,16 @@ function VideoPlayerInner({
             </button>
           </div>
         )}
-        <div className="video-info-row">
-          <span className="video-info-label">Event type:</span>
+        <div className={styles.videoInfoRow}>
+          <span className={styles.videoInfoLabel}>Event type:</span>
           <span>{q.event_type.replace(/_/g, " ")}</span>
         </div>
       </div>
 
       {q.answer_text && (
-        <div className="video-answer">
-          <div className="video-answer-label">Answer transcript</div>
-          <p className="video-answer-text">{q.answer_text}</p>
+        <div className={styles.videoAnswer}>
+          <div className={styles.videoAnswerLabel}>Answer transcript</div>
+          <p className={styles.videoAnswerText}>{q.answer_text}</p>
         </div>
       )}
 
@@ -270,7 +271,7 @@ export default function VideoPlayer({
 }: Props): React.JSX.Element | null {
   if (!result) return null;
   return (
-    <div className="video-panel" ref={panelRef}>
+    <div className={styles.videoPanel} ref={panelRef}>
       <VideoPlayerInner key={result.videoUrl} result={result} onClose={onClose} />
     </div>
   );

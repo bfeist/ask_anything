@@ -1,0 +1,123 @@
+/* ==========================================================================
+   VideoQuestionsList
+   ========================================================================== */
+
+.videoQuestions {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 12px;
+}
+
+.videoQuestionsHeader {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.videoQuestionsList {
+  overflow-y: auto;
+  max-height: 260px;
+  border: 1px solid var(--border);
+  padding: 8px;
+  border-radius: 10px 10px 10px 10px;
+  scrollbar-width: auto;
+  scrollbar-color: var(--border) transparent;
+}
+
+.videoQuestionsList::-webkit-scrollbar {
+  width: 12px;
+}
+
+.videoQuestionsList::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 6px;
+}
+
+.videoQuestionsList::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.videoQuestionsList::-webkit-scrollbar-thumb:hover {
+  background: var(--fg);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.vqItem {
+  display: flex;
+  gap: 12px;
+  padding: 5px 5px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  margin-bottom: 0;
+  background: rgb(31 34 41 / 87.7%);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  font-family: inherit;
+  font-size: 13px;
+  transition:
+    background 0.1s,
+    border-color 0.1s;
+}
+
+.vqItem:last-child {
+  margin-bottom: 0;
+}
+
+.vqItem:hover {
+  background: var(--bg-muted);
+}
+
+.vqRank {
+  flex: 0 0 24px;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding-top: 2px;
+}
+
+.vqBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.vqText {
+  font-size: 13px;
+  line-height: 1.4;
+  margin-bottom: 2px;
+}
+
+.vqMeta {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.vqEvent {
+  text-transform: capitalize;
+}
+
+.vqItemActive {
+  background: radial-gradient(rgb(0 110 255 / 81%), rgb(0 80 185 / 43%));
+  color: #ffffff;
+  text-shadow: none;
+}
+
+.vqItemActive:hover {
+  background: radial-gradient(rgb(0 110 255 / 81%), rgb(0 80 185 / 43%));
+  color: #ffffff;
+}
+
+.vqItemActive .vqRank,
+.vqItemActive .vqMeta {
+  color: #000000b3;
+}

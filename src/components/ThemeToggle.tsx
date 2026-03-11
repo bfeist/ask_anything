@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faMoon, faSun } from "@fortawesome/free-solid-svg-icons";
+import styles from "./ThemeToggle.module.css";
 
 type Theme = "dark" | "light";
 
@@ -41,7 +42,7 @@ export default function ThemeToggle(): React.JSX.Element {
 
   return (
     <button
-      className="theme-toggle"
+      className={styles.themeToggle}
       onClick={toggle}
       type="button"
       role="switch"
@@ -49,13 +50,16 @@ export default function ThemeToggle(): React.JSX.Element {
       aria-label={`Switch to ${isLight ? "dark" : "light"} mode`}
       title={`Switch to ${isLight ? "dark" : "light"} mode`}
     >
-      <span className="theme-toggle__icon theme-toggle__icon--moon" aria-hidden="true">
+      <span
+        className={`${styles.themeToggleIcon} ${styles.themeToggleIconMoon}`}
+        aria-hidden="true"
+      >
         <FontAwesomeIcon icon={faMoon} width={14} height={14} />
       </span>
-      <span className="theme-toggle__track">
-        <span className="theme-toggle__thumb" />
+      <span className={styles.themeToggleTrack}>
+        <span className={styles.themeToggleThumb} />
       </span>
-      <span className="theme-toggle__icon theme-toggle__icon--sun" aria-hidden="true">
+      <span className={`${styles.themeToggleIcon} ${styles.themeToggleIconSun}`} aria-hidden="true">
         <FontAwesomeIcon icon={faSun} width={14} height={14} />
       </span>
     </button>

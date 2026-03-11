@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { getQuestionsForVideo } from "@/lib/searchEngine";
+import styles from "./VideoQuestionsList.module.css";
 
 interface Props {
   /** The source_file identifier for the current video. */
@@ -57,25 +58,27 @@ export default function VideoQuestionsList({
   }
 
   return (
-    <div className="video-questions">
-      <div className="video-questions-header">Questions in this video ({questions.length})</div>
-      <div className="video-questions-list" ref={listRef}>
+    <div className={styles.videoQuestions}>
+      <div className={styles.videoQuestionsHeader}>
+        Questions in this video ({questions.length})
+      </div>
+      <div className={styles.videoQuestionsList} ref={listRef}>
         {questions.map((q, i) => {
           const isActive = q.id === activeQuestionId;
           return (
             <button
               key={q.id}
               ref={isActive ? activeRef : null}
-              className={`vq-item ${isActive ? "vq-item-active" : ""}`}
+              className={`${styles.vqItem} ${isActive ? styles.vqItemActive : ""}`}
               onClick={() => onSeek(q)}
               type="button"
             >
-              <div className="vq-rank">{i + 1}</div>
-              <div className="vq-body">
-                <div className="vq-text">{q.text}</div>
-                <div className="vq-meta">
-                  <span className="vq-time">{formatTime(q.question_start)}</span>
-                  <span className="vq-event">{q.event_type.replace(/_/g, " ")}</span>
+              <div className={styles.vqRank}>{i + 1}</div>
+              <div className={styles.vqBody}>
+                <div className={styles.vqText}>{q.text}</div>
+                <div className={styles.vqMeta}>
+                  <span>{formatTime(q.question_start)}</span>
+                  <span className={styles.vqEvent}>{q.event_type.replace(/_/g, " ")}</span>
                 </div>
               </div>
             </button>

@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { fnv1a32, hashToUnitFloat, yearFraction } from "@/utils/timelineUtils";
+import styles from "./QuestionsTimeline.module.css";
 
 interface Props {
   questions: IndexQuestion[];
@@ -127,17 +128,17 @@ export default function QuestionsTimeline({
   }, [questions, allQuestions, seedKey, startYear, endYear, videoDates]);
 
   return (
-    <div className="questions-timeline">
-      <div className="qt-track">
-        <div className="qt-line" />
+    <div className={styles.questionsTimeline}>
+      <div className={styles.qtTrack}>
+        <div className={styles.qtLine} />
 
         {years.map((y) => (
           <div
             key={y.year}
-            className={`qt-year-tick ${y.isMajor ? "qt-year-tick--major" : ""}`}
+            className={`${styles.qtYearTick} ${y.isMajor ? styles.qtYearTickMajor : ""}`}
             style={{ left: `${y.xPct}%` }}
           >
-            <div className="qt-year-label">{y.year}</div>
+            <div className={styles.qtYearLabel}>{y.year}</div>
           </div>
         ))}
 
@@ -145,7 +146,7 @@ export default function QuestionsTimeline({
           <button
             key={d.id}
             type="button"
-            className="qt-dot"
+            className={styles.qtDot}
             style={{ left: `${d.xPct}%` }}
             onClick={() => onSelectQuestionId?.(d.id)}
             aria-label={`View video: ${d.label}`}
@@ -156,7 +157,7 @@ export default function QuestionsTimeline({
           <button
             key={d.id}
             type="button"
-            className={`qt-dot qt-dot--result${d.id === activeQuestionId ? " qt-dot--active" : ""}`}
+            className={`${styles.qtDot} ${styles.qtDotResult}${d.id === activeQuestionId ? ` ${styles.qtDotActive}` : ""}`}
             style={{ left: `${d.xPct}%` }}
             onClick={() => onSelectQuestionId?.(d.id)}
             aria-label={`View video: ${d.label}`}

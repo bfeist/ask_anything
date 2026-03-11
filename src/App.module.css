@@ -1,0 +1,335 @@
+/* ==========================================================================
+   App — layout, header, and structural styles
+   ========================================================================== */
+
+@keyframes floatSvg {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+
+  50% {
+    transform: translateY(-10px) rotate(1deg);
+  }
+}
+
+/* Full-viewport root wrapper */
+.appRoot {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  position: relative;
+  overflow-x: hidden;
+  background-attachment: fixed;
+}
+
+.appRoot::after {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    110deg,
+    rgb(22 28 35 / 87%) 0%,
+    rgb(27 30 41 / 72%) 40%,
+    rgb(0 0 0 / 0%) 70%,
+    #2a374ad6 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Header
+   -------------------------------------------------------------------------- */
+
+.appHeader::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: var(--header-overlay);
+  z-index: -5;
+  opacity: 0.3;
+  transition: opacity 1.5s ease-in-out;
+  pointer-events: none;
+}
+
+.appHeader:not(.appHeaderHero)::before {
+  opacity: 0.9;
+}
+
+.appHeaderHero {
+  height: 50vh;
+  display: flex;
+  align-items: center;
+}
+
+.appHeaderHero .appHeaderInner {
+  padding-bottom: 32px;
+  width: 100%;
+}
+
+.appHeaderBg {
+  position: fixed;
+  top: -5vh;
+  left: 0;
+  width: 100%;
+  height: 130vh;
+  background-size: cover;
+  background-position: center top;
+  z-index: -10;
+  transition: opacity 1.5s ease-in-out;
+  transform: translateY(calc(var(--scroll-y, 0) * -0.2));
+  pointer-events: none;
+}
+
+.appHeaderBg::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgb(0 0 0 / 50%) 0%,
+    rgb(0 0 0 / 50%) 40%,
+    rgb(0 0 0 / 0%) 100%
+  );
+  z-index: 1;
+  pointer-events: none;
+}
+
+.appHeaderInner {
+  max-width: 1400px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 18px 32px 34px;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  position: relative;
+  z-index: 1;
+}
+
+.appHeaderText {
+  flex: 1;
+  min-width: 0;
+  max-width: 800px;
+  position: relative;
+}
+
+.appHeaderTextContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.appTitleWrap {
+  position: relative;
+}
+
+.appTitle {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #ffffff;
+}
+
+.appTitleIcon {
+  flex-shrink: 0;
+  position: absolute;
+  right: 100%;
+  top: 0;
+  bottom: 0;
+  margin-right: 5px;
+  width: auto;
+  animation: floatSvg 6s ease-in-out infinite;
+  opacity: 0.6;
+  filter: grayscale(0) opacity(1) drop-shadow(0 0 10px rgb(42 187 255 / 60%));
+}
+
+.appTitleIconHero {
+  height: 100%;
+}
+
+.appTitleIconCompact {
+  height: 28px;
+}
+
+.appHeaderHero .appTitleIconCompact {
+  display: none;
+}
+
+.appHeader:not(.appHeaderHero) .appTitleIconHero,
+.appHeader:not(.appHeaderHero) .appTitleIconCompact {
+  display: none;
+}
+
+.appHeader::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgb(0 240 255 / 40%), transparent);
+  z-index: 10;
+}
+
+/* Hero large version */
+.appTitleHero {
+  position: relative;
+}
+
+.appHeader:not(.appHeaderHero) .appTitleHero {
+  position: absolute;
+  visibility: hidden;
+}
+
+.appHeaderHero .appTitleHero {
+  font-size: clamp(36px, 5.5vw, 95px);
+  letter-spacing: -1.5px;
+  line-height: 80px;
+}
+
+/* Compact version */
+.appTitleCompact {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-size: 30px;
+  letter-spacing: -0.5px;
+  white-space: nowrap;
+}
+
+.appHeader:not(.appHeaderHero) .appTitleCompact {
+  position: relative;
+  top: auto;
+  left: auto;
+}
+
+.appHeaderHero .appTitleCompact {
+  opacity: 0;
+}
+
+.appSubtitle {
+  margin: 0 0 10px;
+  font-size: 13px;
+  max-width: 400px;
+  line-height: 18px;
+}
+
+.appHeaderHero .appSubtitle {
+  font-size: 15px;
+  opacity: 0.75;
+}
+
+/* --------------------------------------------------------------------------
+   Content Layout
+   -------------------------------------------------------------------------- */
+
+.app {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 32px 24px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+  position: relative;
+  z-index: 1;
+}
+
+.appMain {
+  position: relative;
+  display: grid;
+  grid-template-columns: 0.65fr 1.35fr;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "search search"
+    "results player";
+  column-gap: 32px;
+  row-gap: 32px;
+  margin-top: -32px;
+}
+
+.appMainHero {
+  grid-template-rows: auto;
+  grid-template-areas: "search search";
+  flex: none;
+}
+
+@media (width <= 900px) {
+  .appMain {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    grid-template-areas:
+      "search"
+      "player"
+      "results";
+    column-gap: 0;
+  }
+
+  .playerPanel {
+    order: -1;
+  }
+}
+
+.searchRow {
+  grid-area: search;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  z-index: 10;
+}
+
+.resultsPanel {
+  grid-area: results;
+  display: flex;
+  flex-direction: column;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.resultsPanel:hover {
+  transform: translateY(-4px);
+}
+
+.playerPanel {
+  grid-area: player;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.playerPanel:hover {
+  transform: translateY(-4px);
+}
+
+/* --------------------------------------------------------------------------
+   Light Theme — App-level overrides
+   -------------------------------------------------------------------------- */
+
+:global(:root[data-theme="light"]) .appTitle {
+  color: var(--fg);
+}
+
+:global(:root[data-theme="light"]) .appHeaderBg::after {
+  background: linear-gradient(
+    to top,
+    rgb(245 245 247 / 60%) 0%,
+    rgb(245 245 247 / 40%) 40%,
+    rgb(245 245 247 / 0%) 100%
+  );
+}
+
+:global(:root[data-theme="light"]) .appRoot::after {
+  background: linear-gradient(160deg, rgb(245 245 247 / 30%) 0%, transparent 55%);
+}

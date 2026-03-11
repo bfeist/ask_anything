@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faXmark } from "@fortawesome/free-solid-svg-icons";
+import styles from "./SearchInput.module.css";
 
 interface Props {
   onSearch: (query: string) => void;
@@ -10,6 +11,7 @@ interface Props {
   placeholder?: string;
   statusText?: string;
   externalValue?: string;
+  hero?: boolean;
 }
 
 /**
@@ -23,6 +25,7 @@ export default function SearchInput({
   placeholder = "Ask anything…",
   statusText,
   externalValue,
+  hero = false,
 }: Props): React.JSX.Element {
   const [value, setValue] = useState("");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -85,10 +88,11 @@ export default function SearchInput({
   };
 
   return (
-    <div className="search-input-wrapper">
+    <div className={styles.searchInputWrapper}>
       <input
         type="text"
-        className="search-input"
+        className={`${styles.searchInput}${hero ? ` ${styles.searchInputHero}` : ""}`}
+        data-search-input
         value={value}
         onChange={handleChange}
         disabled={disabled}
@@ -99,13 +103,13 @@ export default function SearchInput({
         onBlur={handleBlur}
       />
       {statusText && !value && (
-        <span className="search-input-status" aria-hidden="true">
+        <span className={styles.searchInputStatus} aria-hidden="true">
           {statusText}
         </span>
       )}
       {value && (
         <button
-          className="search-clear"
+          className={styles.searchClear}
           onClick={handleClear}
           aria-label="Clear search"
           type="button"

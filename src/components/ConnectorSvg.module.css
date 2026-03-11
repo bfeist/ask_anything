@@ -1,0 +1,28 @@
+/* ==========================================================================
+   ConnectorSvg
+   ========================================================================== */
+
+.selectionConnector {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.selectionConnector path {
+  stroke: rgb(255 255 255 / 23.3%);
+  stroke-width: 2px;
+  stroke-dasharray: 6 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+/* --------------------------------------------------------------------------
+   Light Theme
+   -------------------------------------------------------------------------- */
+
+:global(:root[data-theme="light"]) .selectionConnector path {
+  stroke: rgb(0 0 0 / 15%);
+}

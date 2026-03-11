@@ -59,6 +59,13 @@ module.exports = {
             message: "Class selectors in CSS Modules must be camelCase (e.g. .myClass)",
           },
         ],
+        "selector-pseudo-class-no-unknown": [
+          true,
+          {
+            ignorePseudoClasses: ["global", "local"],
+          },
+        ],
+        "keyframes-name-pattern": null,
         "no-descending-specificity": null,
       },
     },

@@ -1,0 +1,80 @@
+/* ==========================================================================
+   Ask Anything — Global base styles & theme tokens
+   ========================================================================== */
+
+:root {
+  --bg: #050505;
+  --fg: #ffffff;
+  --bg-muted: #121212;
+  --border: #333333;
+  --border-strong: #00f0ff;
+  --accent: #fc3d21; /* NASA Red */
+  --nasa-blue: #0b3d91;
+  --text-muted: #888888;
+  --radius: 0;
+  --glow: 0 0 12px var(--fg);
+
+  /* Light-mode overridable tokens */
+  --panel-bg: rgb(20 20 20 / 90%);
+  --panel-bg-end: rgb(5 5 5 / 98%);
+  --search-bg: rgb(0 0 0 / 47.3%);
+  --search-focus-bg: rgb(255 255 255 / 18%);
+  --pill-bg: rgb(58 58 58 / 59.6%);
+  --pill-hover-bg: rgb(0 132 255 / 10%);
+  --result-bg: rgb(37 41 49 / 87.7%);
+  --result-hover-bg: rgb(0 86 199 / 42.5%);
+  --result-border: rgb(44 48 56 / 65.1%);
+  --placeholder-border: rgb(255 255 255 / 21.2%);
+  --header-overlay: #121825;
+  --vignette-opacity: 0.4;
+
+  font-family: "SF Mono", Consolas, Menlo, monospace;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--fg);
+  background-color: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizelegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scrollbar-gutter: stable;
+}
+
+/* --------------------------------------------------------------------------
+   Light Theme
+   -------------------------------------------------------------------------- */
+:root[data-theme="light"] {
+  --bg: #f5f5f7;
+  --fg: #1d1d1f;
+  --bg-muted: #e8e8ed;
+  --border: #c8c8cc;
+  --border-strong: #0084ff;
+  --accent: #d32011;
+  --nasa-blue: #0b3d91;
+  --text-muted: #6e6e73;
+  --glow: 0 2px 8px rgb(0 0 0 / 12%);
+  --panel-bg: rgb(255 255 255 / 88%);
+  --panel-bg-end: rgb(245 245 247 / 96%);
+  --search-bg: rgb(255 255 255 / 85%);
+  --search-focus-bg: rgb(255 255 255 / 95%);
+  --pill-bg: rgb(230 230 235 / 85%);
+  --pill-hover-bg: rgb(0 113 227 / 8%);
+  --result-bg: rgb(255 255 255 / 92%);
+  --result-hover-bg: rgb(0 113 227 / 8%);
+  --result-border: rgb(200 200 204 / 60%);
+  --placeholder-border: rgb(0 0 0 / 12%);
+  --header-overlay: #d8dce6;
+  --vignette-opacity: 0.15;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}

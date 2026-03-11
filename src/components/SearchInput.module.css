@@ -1,0 +1,104 @@
+/* ==========================================================================
+   SearchInput
+   ========================================================================== */
+
+.searchInputWrapper {
+  position: relative;
+  margin-bottom: 16px;
+}
+
+.searchInput {
+  width: 100%;
+  padding: 16px 44px 16px 28px;
+  font-size: 20px;
+  font-family: inherit;
+  border: 2px solid rgb(0 132 255);
+  background: var(--search-bg);
+  backdrop-filter: blur(50px) saturate(100%);
+  color: var(--fg);
+  outline: none;
+  border-radius: 40px;
+  box-shadow:
+    0 8px 32px rgb(0 0 0 / 40%),
+    inset 0 0 0 1px rgb(255 255 255 / 10%);
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  text-shadow: 0 0 10px rgb(255 255 255 / 30%);
+}
+
+.searchInput:focus {
+  border-color: rgb(0 132 255);
+  box-shadow:
+    0 8px 32px rgb(0 113 227 / 21.2%),
+    inset 0 0 20px rgb(0 113 227 / 21.2%);
+  background: rgb(0 0 0);
+}
+
+.searchInput::placeholder {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.searchInput:disabled {
+  cursor: not-allowed;
+}
+
+.searchInput:disabled::placeholder {
+  color: transparent;
+}
+
+.searchInputHero {
+  font-size: 23px;
+  padding: 18px 52px 18px 22px;
+}
+
+.searchInputStatus {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 14px;
+  color: rgb(255 255 255 / 85%);
+  pointer-events: none;
+  white-space: nowrap;
+  text-align: center;
+  text-shadow: 0 0 12px rgb(255 255 255 / 30%);
+}
+
+.searchClear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.searchClear:hover {
+  color: var(--fg);
+}
+
+/* --------------------------------------------------------------------------
+   Light Theme
+   -------------------------------------------------------------------------- */
+
+:global(:root[data-theme="light"]) .searchInput {
+  border-color: var(--border-strong);
+  box-shadow:
+    0 8px 32px rgb(0 0 0 / 8%),
+    inset 0 0 0 1px rgb(0 0 0 / 5%);
+  text-shadow: none;
+}
+
+:global(:root[data-theme="light"]) .searchInput::placeholder {
+  color: var(--text-muted);
+}

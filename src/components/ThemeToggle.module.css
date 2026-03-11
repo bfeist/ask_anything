@@ -1,0 +1,92 @@
+/* ==========================================================================
+   ThemeToggle — sliding switch
+   ========================================================================== */
+
+.themeToggle {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.themeToggleIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg);
+  line-height: 1;
+  user-select: none;
+  transition: opacity 0.25s;
+}
+
+/* Dim the inactive side */
+.themeToggleIconSun {
+  opacity: 0.45;
+}
+
+.themeToggleIconMoon {
+  opacity: 1;
+}
+
+:global(:root[data-theme="light"]) .themeToggleIconSun {
+  opacity: 1;
+}
+
+:global(:root[data-theme="light"]) .themeToggleIconMoon {
+  opacity: 0.45;
+}
+
+/* Track */
+.themeToggleTrack {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 18%);
+  border: 1.5px solid rgb(255 255 255 / 30%);
+  transition:
+    background 0.3s,
+    border-color 0.3s;
+}
+
+.themeToggle:hover .themeToggleTrack {
+  border-color: rgb(255 255 255 / 50%);
+}
+
+/* Thumb */
+.themeToggleThumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 30%);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Slide thumb to the right in light mode */
+:global(:root[data-theme="light"]) .themeToggleThumb {
+  transform: translateX(18px);
+  background: #333333;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 15%);
+}
+
+/* Light-theme track colours */
+:global(:root[data-theme="light"]) .themeToggleTrack {
+  background: rgb(0 0 0 / 10%);
+  border-color: rgb(0 0 0 / 22%);
+}
+
+:global(:root[data-theme="light"]) .themeToggle:hover .themeToggleTrack {
+  border-color: rgb(0 0 0 / 40%);
+}
