@@ -201,7 +201,7 @@ function VideoPlayerInner({
 
       <div className={styles.videoInfo}>
         <div className={styles.videoInfoRow}>
-          <span className={styles.videoInfoLabel}>Question:</span>
+          <span className={styles.videoInfoLabel}><span className={styles.labelFull}>Question:</span><span className={styles.labelShort}>Q:</span></span>
           <span>
             {formatTime(q.question_start ?? 0)} – {formatTime(q.question_end ?? 0)}
           </span>
@@ -215,13 +215,13 @@ function VideoPlayerInner({
               }}
               type="button"
             >
-              ↻ Seek to Question
+              ↻ <span className={styles.seekFull}>Seek to Question</span><span className={styles.seekShort}>Seek to Q</span>
             </button>
           )}
         </div>
         {hasAnswers && (
           <div className={styles.videoInfoRow}>
-            <span className={styles.videoInfoLabel}>Answer:</span>
+            <span className={styles.videoInfoLabel}><span className={styles.labelFull}>Answer:</span><span className={styles.labelShort}>A:</span></span>
             <span>
               {formatTime(firstAnswer.start)} – {formatTime(firstAnswer.end)}
             </span>
@@ -234,7 +234,7 @@ function VideoPlayerInner({
               }}
               type="button"
             >
-              ↻ Seek to Answer
+              ↻ <span className={styles.seekFull}>Seek to Answer</span><span className={styles.seekShort}>Seek to A</span>
             </button>
           </div>
         )}

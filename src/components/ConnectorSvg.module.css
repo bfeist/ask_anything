@@ -9,6 +9,12 @@
   z-index: 1;
 }
 
+@media (width <= 900px) {
+  .selectionConnector {
+    display: none;
+  }
+}
+
 .selectionConnector path {
   stroke: rgb(255 255 255 / 23.3%);
   stroke-width: 2px;

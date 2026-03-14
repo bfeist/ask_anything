@@ -108,3 +108,9 @@
 :global(:root[data-theme="light"]) .commonQuestionPill {
   box-shadow: 0 2px 8px rgb(0 0 0 / 6%);
 }
+
+@media (width <= 900px) {
+  .commonQuestionsGrid {
+    grid-template-columns: 1fr;
+  }
+}

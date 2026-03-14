@@ -102,3 +102,15 @@
 :global(:root[data-theme="light"]) .searchInput::placeholder {
   color: var(--text-muted);
 }
+
+@media (width <= 900px) {
+  .searchInput {
+    font-size: 16px;
+    padding: 12px 38px 12px 22px;
+  }
+
+  .searchInputHero {
+    font-size: 18px;
+    padding: 14px 44px 14px 18px;
+  }
+}

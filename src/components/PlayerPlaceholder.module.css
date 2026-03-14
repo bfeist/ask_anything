@@ -62,3 +62,15 @@
 :global(:root[data-theme="light"]) .playerPlaceholder .astronautSvgContainer {
   filter: invert(1) grayscale(0) opacity(0.5) drop-shadow(0 0 15px rgb(0 113 227 / 50%));
 }
+
+@media (width <= 900px) {
+  .playerPlaceholder {
+    min-height: auto;
+    padding: 16px 0;
+  }
+
+  .astronautSvgContainer {
+    width: 180px;
+    height: 180px;
+  }
+}

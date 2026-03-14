@@ -190,6 +190,44 @@
   white-space: nowrap;
 }
 
+.seekShort {
+  display: none;
+}
+
+.labelShort {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .seekFull {
+    display: none;
+  }
+
+  .seekShort {
+    display: inline;
+  }
+
+  .labelFull {
+    display: none;
+  }
+
+  .labelShort {
+    display: inline;
+  }
+
+  .videoInfoLabel {
+    min-width: unset;
+  }
+
+  .videoSeekBtn {
+    width: auto;
+  }
+
+  .videoQuestionText {
+    font-size: 15px;
+  }
+}
+
 .videoSeekBtn:hover {
   background: var(--fg);
   color: var(--bg);

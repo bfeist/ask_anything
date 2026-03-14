@@ -18,10 +18,16 @@ function formatTime(seconds: number | null): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function scoreBar(score: number): string {
-  // Visual score indicator using block characters
-  const filled = Math.round(score * 20);
-  return "█".repeat(filled) + "░".repeat(20 - filled);
+function ScoreBar({ score }: { score: number }): React.JSX.Element {
+  const pct = Math.round(score * 100);
+  return (
+    <div className={styles.scoreBarWrap} title={`Similarity: ${score.toFixed(3)}`}>
+      <div className={styles.scoreBar}>
+        <div className={styles.scoreBarFill} style={{ width: `${pct}%` }} />
+      </div>
+      <span className={styles.scoreBarLabel}>{(score * 100).toFixed(1)}%</span>
+    </div>
+  );
 }
 
 /**
@@ -87,9 +93,7 @@ export default function ResultsList({
           <div className={styles.resultBody}>
             <div className={styles.resultText}>{r.question.text}</div>
             <div className={styles.resultMeta}>
-              <span className={styles.resultScore} title={`Similarity: ${r.score.toFixed(3)}`}>
-                {scoreBar(r.score)} {(r.score * 100).toFixed(1)}%
-              </span>
+              <ScoreBar score={r.score} />
               <span className={styles.resultEvent}>{r.question.event_type.replace(/_/g, " ")}</span>
               <span>{formatTime(r.question.question_start)}</span>
             </div>

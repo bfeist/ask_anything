@@ -93,9 +93,16 @@
   opacity: 1 !important;
 }
 
-.resultItemSelected .resultScore {
-  color: #ffffff;
-  opacity: 1 !important;
+.resultItemSelected .scoreBarWrap {
+  color: #fff;
+}
+
+.resultItemSelected .scoreBar {
+  background: rgb(255 255 255 / 25%);
+}
+
+.resultItemSelected .scoreBarFill {
+  background: #fff;
 }
 
 .resultRank {
@@ -125,10 +132,35 @@
   flex-wrap: wrap;
 }
 
-.resultScore {
-  font-family: inherit;
-  letter-spacing: -1px;
-  font-size: 10px;
+.scoreBarWrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.scoreBar {
+  position: relative;
+  width: 60px;
+  height: 6px;
+  background: rgb(255 255 255 / 12%);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.scoreBarFill {
+  height: 100%;
+  background: #999;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.scoreBarLabel {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  line-height: 1;
 }
 
 .resultEvent {
